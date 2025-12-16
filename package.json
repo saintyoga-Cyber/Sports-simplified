@@ -1,0 +1,26 @@
+{
+  "name": "sports-simplified",
+  "author": "Pebble Dev Companion",
+  "version": "1.0.0",
+  "pebble": {
+    "sdkVersion": "3",
+    "projectType": "native",
+    "enableMultiJS": false,
+    "targetPlatforms": ["aplite", "basalt", "chalk", "diorite", "emery"],
+    "watchapp": {
+      "watchface": false
+    },
+    "messageKeys": [],
+    "resources": {
+      "media": [
+        {
+          "type": "png",
+          "name": "ICON_HOCKEY",
+          "file": "images/icon_hockey.png"
+        }
+      ]
+    },
+    "capabilities": ["configurable"]
+  },
+  "dependencies": {}
+}
