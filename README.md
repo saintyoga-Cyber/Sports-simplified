@@ -11,7 +11,7 @@ This app works with a companion web service that:
 
 ## Setup
 
-1. **Configure the companion URL**: Edit `src/pkjs/index.js` and replace `YOUR_REPLIT_URL_HERE` with your companion app URL.
+1. **Companion URL is pre-configured**: The app is already configured to use `https://localhost:5000` as the companion service.
 
 2. **Build the app**:
    ```bash

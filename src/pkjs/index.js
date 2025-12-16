@@ -1,4 +1,4 @@
-var COMPANION_URL = 'YOUR_REPLIT_URL_HERE';
+var COMPANION_URL = 'https://localhost:5000';
 
 Pebble.addEventListener('ready', function() {
   console.log('Sports Simplified ready!');
