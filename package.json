@@ -17,13 +17,7 @@
     },
     "messageKeys": [],
     "resources": {
-      "media": [
-        {
-          "type": "png",
-          "name": "ICON_HOCKEY",
-          "file": "images/icon_hockey.png"
-        }
-      ]
+      "media": []
     },
     "capabilities": ["configurable"]
   },
