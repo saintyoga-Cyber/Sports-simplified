@@ -7,7 +7,7 @@ A simple Pebble watchapp that pushes NHL game timeline pins for the Vancouver Ca
 This app works with a companion web service that:
 1. Fetches NHL game data from ESPN's API
 2. Pushes timeline pins to your Pebble watch via the Rebble API
-3. Updates automatically twice per day (every 2 minutes during live games)
+3. Updates automatically every 2 hours (every 2 minutes during live games)
 
 ## Setup
 
