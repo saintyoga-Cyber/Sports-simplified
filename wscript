@@ -1,3 +1,4 @@
+import os
 
 # Top-level wscript for Pebble SDK
 
