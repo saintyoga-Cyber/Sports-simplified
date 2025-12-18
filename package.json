@@ -19,7 +19,7 @@
     "resources": {
       "media": []
     },
-    "capabilities": ["configurable"]
+    "capabilities": ["configurable", "timeline"]
   },
   "dependencies": {}
 }
