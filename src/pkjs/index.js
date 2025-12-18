@@ -3,13 +3,15 @@ var COMPANION_URL = 'https://pebble-dev-companion.replit.app';
 Pebble.addEventListener('ready', function() {
   console.log('Sports Simplified ready!');
   
-  var token = Pebble.getTimelineToken();
-  if (token) {
-    console.log('Timeline token: ' + token);
-    registerToken(token);
-  } else {
-    console.log('No timeline token available');
-  }
+  Pebble.getTimelineToken(
+    function(token) {
+      console.log('Timeline token: ' + token);
+      registerToken(token);
+    },
+    function(error) {
+      console.log('Error getting timeline token: ' + error);
+    }
+  );
 });
 
 function registerToken(token) {
