@@ -1,0 +1,26 @@
+{
+  "uuid": "e8653fbb-d20b-44b3-850b-527cb4f3b4e3",
+  "shortName": "Sports",
+  "longName": "Sports Simplified - NHL Timeline",
+  "companyName": "Pebble Dev Companion",
+  "versionCode": 1,
+  "versionLabel": "1.0.0",
+  "sdkVersion": "3",
+  "targetPlatforms": [
+    "aplite",
+    "basalt",
+    "chalk",
+    "diorite",
+    "emery"
+  ],
+  "watchapp": {
+    "watchface": false
+  },
+  "appKeys": {},
+  "resources": {
+    "media": []
+  },
+  "capabilities": [
+    "configurable"
+  ]
+}
