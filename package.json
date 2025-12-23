@@ -3,7 +3,7 @@
   "author": "Pebble Dev Companion",
   "version": "1.0.0",
   "pebble": {
-    "uuid": "b6b4ec85-7183-470c-86a4-30c6b81b8527",
+    "uuid": "e8653fbb-d20b-44b3-850b-527cb4f3b4e3",
     "sdkVersion": "3",
     "projectType": "native",
     "displayName": "Sports Simplified",
