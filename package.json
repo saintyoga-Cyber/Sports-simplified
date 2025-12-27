@@ -3,7 +3,7 @@
   "author": "Pebble Dev Companion",
   "version": "1.0.0",
   "pebble": {
-    "uuid": "e8653fbb-d20b-44b3-850b-527cb4f3b4e3",
+    "uuid": "cbb5fc0a-47bd-4784-b816-2c5918820c2b",
     "sdkVersion": "3",
     "projectType": "native",
     "displayName": "Sports Simplified",
@@ -11,7 +11,13 @@
     "longName": "Sports Simplified - NHL Timeline",
     "companyName": "Pebble Dev Companion",
     "enableMultiJS": false,
-    "targetPlatforms": ["aplite", "basalt", "chalk", "diorite", "emery"],
+    "targetPlatforms": [
+      "aplite",
+      "basalt",
+      "chalk",
+      "diorite",
+      "emery"
+    ],
     "watchapp": {
       "watchface": false
     },
@@ -19,7 +25,10 @@
     "resources": {
       "media": []
     },
-    "capabilities": ["configurable", "timeline"]
+    "capabilities": [
+      "configurable",
+      "timeline"
+    ]
   },
   "dependencies": {}
 }
