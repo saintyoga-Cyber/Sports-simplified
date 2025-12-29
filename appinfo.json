@@ -1,11 +1,12 @@
 {
   "uuid": "cbb5fc0a-47bd-4784-b816-2c5918820c2b",
-  "shortName": "Sports",
-  "longName": "Sports Simplified - NHL Timeline",
-  "companyName": "Pebble Dev Companion",
-  "versionCode": 2,
-  "versionLabel": "1.0.1",
   "sdkVersion": "3",
+  "projectType": "native",
+  "displayName": "Sports Simplified",
+  "shortName": "Sports Simplified",
+  "longName": "Sports Simplified",
+  "companyName": "Pebble Dev Companion",
+  "enableMultiJS": false,
   "targetPlatforms": [
     "aplite",
     "basalt",
@@ -16,17 +17,15 @@
   "watchapp": {
     "watchface": false
   },
-  "appKeys": {},
+  "messageKeys": {},
   "resources": {
-    "media": [
-      {
-        "type": "png",
-        "name": "ICON_HOCKEY",
-        "file": "images/icon_hockey.png"
-      }
-    ]
+    "media": []
   },
   "capabilities": [
-    "configurable"
-  ]
+    "configurable",
+    "timeline"
+  ],
+  "name": "sports-simplified",
+  "versionLabel": "1.0.1",
+  "appKeys": {}
 }
