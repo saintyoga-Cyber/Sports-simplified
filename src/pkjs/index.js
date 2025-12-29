@@ -1,4 +1,4 @@
-var COMPANION_URL = 'https://pebble-dev-companion.replit.app';
+var COMPANION_URL = 'https://pebble-connect--saintyoga1.replit.app';
 
 Pebble.addEventListener('ready', function() {
   console.log('Sports Simplified ready!');
