@@ -13,6 +13,6 @@
   "resources": {"media": []},
   "capabilities": ["configurable", "timeline"],
   "name": "sports-simplified",
-  "versionLabel": "1.3",
+  "versionLabel": "1.4",
   "appKeys": {}
 }
