@@ -1,7 +1,7 @@
 {
   "name": "sports-simplified",
   "author": "Pebble Dev Companion",
-  "version": "1.4",
+  "version": "1.5",
   "pebble": {
     "uuid": "cbb5fc0a-47bd-4784-b816-2c5918820c2b",
     "sdkVersion": "3",
@@ -12,17 +12,11 @@
     "companyName": "Pebble Dev Companion",
     "enableMultiJS": true,
     "targetPlatforms": ["aplite", "basalt", "chalk", "diorite", "emery"],
-    "watchapp": {
-      "watchface": false
-    },
+    "watchapp": {"watchface": false},
     "messageKeys": [],
-    "resources": {
-      "media": []
-    },
+    "resources": {"media": []},
     "capabilities": ["configurable", "timeline"],
-    "js": {
-      "main": "src/pkjs/index.js"
-    }
+    "js": {"main": "src/pkjs/index.js"}
   },
   "dependencies": {}
 }
