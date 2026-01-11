@@ -3,6 +3,9 @@ var COMPANION_URL = 'https://pebble-connect--saintyoga1.replit.app';
 Pebble.addEventListener('ready', function() {
   console.log('Sports Simplified ready!');
   
+  // Ping companion to wake it up (for live score updates)
+  wakeCompanion();
+  
   Pebble.getTimelineToken(
     function(token) {
       console.log('Timeline token: ' + token);
@@ -13,6 +16,20 @@ Pebble.addEventListener('ready', function() {
     }
   );
 });
+
+function wakeCompanion() {
+  var xhr = new XMLHttpRequest();
+  xhr.open('GET', COMPANION_URL + '/api/sports/games', true);
+  xhr.onload = function() {
+    if (xhr.status === 200) {
+      console.log('Companion server awake');
+    }
+  };
+  xhr.onerror = function() {
+    console.log('Could not reach companion');
+  };
+  xhr.send();
+}
 
 function registerToken(token) {
   var xhr = new XMLHttpRequest();
