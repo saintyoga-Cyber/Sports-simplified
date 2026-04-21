@@ -10,12 +10,12 @@
     "shortName": "Sports",
     "longName": "Sports Simplified - NHL Timeline",
     "companyName": "Pebble Dev Companion",
-    "enableMultiJS": false,
+    "enableMultiJS": true,
     "targetPlatforms": ["aplite", "basalt", "chalk", "diorite", "emery"],
     "watchapp": {
       "watchface": false
     },
-    "messageKeys": [],
+    "messageKeys": ["SPORTS_APP_OPEN", "SPORTS_APP_EXIT"],
     "resources": {
       "media": []
     },

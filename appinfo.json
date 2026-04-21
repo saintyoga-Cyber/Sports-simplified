@@ -6,12 +6,25 @@
   "shortName": "Sports Simplified",
   "longName": "Sports Simplified",
   "companyName": "Pebble Dev Companion",
-  "enableMultiJS": false,
-  "targetPlatforms": ["aplite", "basalt", "chalk", "diorite", "emery"],
-  "watchapp": {"watchface": false},
+  "enableMultiJS": true,
+  "targetPlatforms": [
+    "aplite",
+    "basalt",
+    "chalk",
+    "diorite",
+    "emery"
+  ],
+  "watchapp": {
+    "watchface": false
+  },
   "messageKeys": {},
-  "resources": {"media": []},
-  "capabilities": ["configurable", "timeline"],
+  "resources": {
+    "media": []
+  },
+  "capabilities": [
+    "configurable",
+    "timeline"
+  ],
   "name": "sports-simplified",
   "versionLabel": "1.4",
   "appKeys": {}
