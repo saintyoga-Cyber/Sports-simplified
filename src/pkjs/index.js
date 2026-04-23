@@ -1,7 +1,57 @@
 var timeline = require('./timeline');
+var Clay = require('@rebble/clay');
+var buildClayConfig = require('./clay-config');
 
 var COMPANION_URL = 'https://pebble-connect--saintyoga1.replit.app';
 var POLL_INTERVAL_MS = 2 * 60 * 1000;
+
+// localStorage keys for Clay-driven settings.
+var LS_SPORT = 'sports_selected_sport';
+var LS_TEAMS = 'sports_followed_teams';
+
+function getSavedSport() {
+  try {
+    return localStorage.getItem(LS_SPORT) || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function getSavedTeamIds() {
+  try {
+    var raw = localStorage.getItem(LS_TEAMS);
+    if (!raw) return [];
+    var parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+// Clay needs a config object at construction time. Start with an empty
+// teams list — we rebuild and overwrite clay.config on every settings
+// open so the team picker is always populated from the live server.
+//
+// The customFn runs INSIDE the Clay webview on the phone (not in pkjs).
+// Clay serialises it via .toString() before injecting into the webview,
+// so closures/free variables from this scope do NOT survive. We build
+// a self-contained Function whose body has COMPANION_URL inlined as a
+// string literal.
+// clay-config.clayCustomFn is a FACTORY: clayCustomFn(companionUrl)
+// returns the actual handler that Clay should invoke with `this` set
+// to the Clay instance. We must (a) call the factory with the URL,
+// then (b) call the returned handler with the Clay context.
+var clayCustomFnBody =
+  '((' + buildClayConfig.clayCustomFn.toString() + ')(' +
+  JSON.stringify(COMPANION_URL) + ')).call(this);';
+// eslint-disable-next-line no-new-func
+var clayCustomFn = new Function(clayCustomFnBody);
+
+var clay = new Clay(
+  buildClayConfig({ sport: 'nhl', teams: [], followedTeamIds: [] }),
+  clayCustomFn,
+  { autoHandleEvents: false }
+);
 
 var pollTimer = null;
 // Master gate. Any in-flight fetch callback that resolves after
@@ -15,9 +65,18 @@ var pushedFinalIds = {};
 
 // ---------- snapshot fetch ----------
 
+function buildSnapshotQuery() {
+  var sport = getSavedSport();
+  var teams = getSavedTeamIds();
+  var params = [];
+  if (sport) params.push('sport=' + encodeURIComponent(sport));
+  if (teams.length > 0) params.push('teams=' + encodeURIComponent(teams.join(',')));
+  return params.length > 0 ? '?' + params.join('&') : '';
+}
+
 function fetchSnapshot(cb) {
   var xhr = new XMLHttpRequest();
-  xhr.open('GET', COMPANION_URL + '/api/sports/games', true);
+  xhr.open('GET', COMPANION_URL + '/api/sports/games' + buildSnapshotQuery(), true);
   xhr.onload = function() {
     if (xhr.status >= 200 && xhr.status < 300) {
       try {
@@ -204,16 +263,12 @@ var MESSAGE_KEYS_INDEX = {
 
 Pebble.addEventListener('ready', function() {
   console.log('Sports Simplified pkjs ready');
-  Pebble.getTimelineToken(function(token) {
-    console.log('sports: timeline token ' + (token ? token.substring(0, 10) + '...' : '(none)'));
-  }, function(err) {
-    console.log('sports: timeline token error: ' + err);
-  });
   // 'ready' fires when pkjs spins up alongside the watchapp launch — in
   // PebbleKit JS this is the de-facto watchapp-open signal. The
-  // SPORTS_APP_OPEN/EXIT appmessage handler below gives the C side a
-  // way to override this gating once the matching C wiring lands
-  // (flagged follow-up); until then, ready==open / pkjs-teardown==exit.
+  // SPORTS_APP_OPEN/EXIT appmessage handler below lets the C side
+  // override this gating once the matching C wiring lands.
+  // (timeline.js fetches a fresh timeline token on every insertUserPin,
+  //  so no upfront token fetch is needed here.)
   startPolling();
 });
 
@@ -231,14 +286,87 @@ Pebble.addEventListener('appmessage', function(e) {
   }
 });
 
+// ---------- Clay-driven settings ----------
+
+function fetchTeamsForSport(sport, cb) {
+  var xhr = new XMLHttpRequest();
+  xhr.open(
+    'GET',
+    COMPANION_URL + '/api/sports/teams?sport=' + encodeURIComponent(sport),
+    true
+  );
+  xhr.onload = function() {
+    if (xhr.status >= 200 && xhr.status < 300) {
+      try {
+        var data = JSON.parse(xhr.responseText);
+        cb(null, Array.isArray(data) ? data : []);
+      } catch (e) {
+        cb(e, []);
+      }
+    } else {
+      cb(new Error('teams status ' + xhr.status), []);
+    }
+  };
+  xhr.onerror = function() { cb(new Error('teams network error'), []); };
+  xhr.send();
+}
+
 Pebble.addEventListener('showConfiguration', function() {
-  Pebble.openURL(COMPANION_URL + '/sports');
+  // Clay is constructed with autoHandleEvents:false so we can fetch the
+  // live team list from the companion server first, rebuild the config
+  // dynamically, and then hand the URL to Pebble.openURL ourselves.
+  var sport = getSavedSport() || 'nhl';
+  var followed = getSavedTeamIds();
+
+  fetchTeamsForSport(sport, function(err, teams) {
+    if (err) {
+      console.log('sports: settings teams fetch failed: ' + err.message +
+        ' — falling back to empty team list');
+      teams = [];
+    }
+    clay.config = buildClayConfig({
+      sport: sport,
+      teams: teams,
+      followedTeamIds: followed
+    });
+    Pebble.openURL(clay.generateUrl());
+  });
 });
 
-Pebble.addEventListener('webviewclosed', function() {
-  // Per Task #18 acceptance criteria: clear the timer on
-  // webviewclosed / app exit. Settings round-trip (Phase D) will
-  // re-start polling explicitly when it lands.
-  console.log('sports: webviewclosed — stopping poll loop');
-  stopPolling();
+Pebble.addEventListener('webviewclosed', function(e) {
+  // Settings webview closed. Do NOT stop polling here — settings can be
+  // opened mid-session while a live game is being tracked. The poll
+  // loop is gated by SPORTS_APP_EXIT (from C) or natural drain when no
+  // live games remain.
+  if (!e || !e.response) {
+    console.log('sports: webviewclosed (cancelled, no payload)');
+    return;
+  }
+
+  var settings;
+  try {
+    settings = clay.getSettings(e.response);
+  } catch (err) {
+    console.log('sports: clay.getSettings failed: ' + err.message);
+    return;
+  }
+
+  if (!settings) {
+    console.log('sports: webviewclosed (no settings parsed)');
+    return;
+  }
+
+  // Clay wraps each value as { value: ... } for messageKey-mapped items.
+  function unwrap(v) { return v && typeof v === 'object' && 'value' in v ? v.value : v; }
+  var sport = unwrap(settings.SPORT);
+  var teams = unwrap(settings.TEAMS);
+
+  if (sport === 'nhl' || sport === 'fifa-wc') {
+    try { localStorage.setItem(LS_SPORT, sport); } catch (err) {}
+    console.log('sports: saved sport=' + sport);
+  }
+  if (Array.isArray(teams)) {
+    try { localStorage.setItem(LS_TEAMS, JSON.stringify(teams)); } catch (err) {}
+    console.log('sports: saved followed teams=' + teams.join(','));
+  }
 });
