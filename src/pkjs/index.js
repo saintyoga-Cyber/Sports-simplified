@@ -1,5 +1,5 @@
 var timeline = require('./timeline');
-var Clay = require('@rebble/clay');
+var Clay = require('./clay');
 var buildClayConfig = require('./clay-config');
 
 var COMPANION_URL = 'https://pebble-connect--saintyoga1.replit.app';
