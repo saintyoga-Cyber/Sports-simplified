@@ -21,10 +21,12 @@
     "watchapp": {
       "watchface": false
     },
-    "messageKeys": [
-      "SPORTS_APP_OPEN",
-      "SPORTS_APP_EXIT"
-    ],
+    "messageKeys": {
+      "SPORT": 0,
+      "TEAMS": 1,
+      "SPORTS_APP_OPEN": 2,
+      "SPORTS_APP_EXIT": 3
+    },
     "resources": {
       "media": []
     },
