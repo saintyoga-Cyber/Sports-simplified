@@ -255,10 +255,12 @@ function readKey(payload, name) {
   return undefined;
 }
 
-// Order MUST match pebble.messageKeys in package.json.
+// Indices MUST match pebble.messageKeys in package.json. SPORT (0) and
+// TEAMS (1) are owned by Clay; SPORTS_APP_OPEN (2) and SPORTS_APP_EXIT
+// (3) are the C-side appmessage lifecycle keys.
 var MESSAGE_KEYS_INDEX = {
-  SPORTS_APP_OPEN: 0,
-  SPORTS_APP_EXIT: 1
+  SPORTS_APP_OPEN: 2,
+  SPORTS_APP_EXIT: 3
 };
 
 Pebble.addEventListener('ready', function() {
