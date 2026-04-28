@@ -297,6 +297,12 @@ function fetchTeamsForSport(sport, cb) {
     COMPANION_URL + '/api/sports/teams?sport=' + encodeURIComponent(sport),
     true
   );
+  // Hard cap so a stalled fetch can't leave the settings page hanging
+  // on a black screen. The showConfiguration handler swaps in an empty
+  // team list on error and still calls Pebble.openURL, so the page
+  // opens (just without team checkboxes) instead of never appearing.
+  xhr.timeout = 5000;
+  xhr.ontimeout = function() { cb(new Error('timeout'), []); };
   xhr.onload = function() {
     if (xhr.status >= 200 && xhr.status < 300) {
       try {
@@ -320,7 +326,11 @@ Pebble.addEventListener('showConfiguration', function() {
   var sport = getSavedSport() || 'nhl';
   var followed = getSavedTeamIds();
 
+  console.log('sports: showConfiguration — fetching teams for sport=' + sport);
   fetchTeamsForSport(sport, function(err, teams) {
+    console.log('sports: showConfiguration teams callback err=' +
+      (err && err.message ? err.message : 'none') +
+      ' teams.length=' + (teams ? teams.length : 0));
     if (err) {
       console.log('sports: settings teams fetch failed: ' + err.message +
         ' — falling back to empty team list');
@@ -331,7 +341,10 @@ Pebble.addEventListener('showConfiguration', function() {
       teams: teams,
       followedTeamIds: followed
     });
-    Pebble.openURL(clay.generateUrl());
+    var settingsUrl = clay.generateUrl();
+    console.log('sports: clay.generateUrl() = ' +
+      (settingsUrl ? settingsUrl.substring(0, 200) : '(empty)'));
+    Pebble.openURL(settingsUrl);
   });
 });
 
