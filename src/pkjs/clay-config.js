@@ -94,6 +94,8 @@ function clayCustomFn(companionUrl) {
     var sportItem = clay.getItemByMessageKey('SPORT');
     var searchItem = clay.getItemById('teamSearch');
     var teamPicker = clay.getItemByMessageKey('TEAMS');
+    console.log('clay-customFn: init sportItem=' + !!sportItem +
+      ' searchItem=' + !!searchItem + ' teamPicker=' + !!teamPicker);
     if (!sportItem || !teamPicker) return;
 
     var allOptions = teamPicker.config.options.slice();
@@ -118,24 +120,51 @@ function clayCustomFn(companionUrl) {
 
     sportItem.on('change', function() {
       var newSport = String(sportItem.get() || 'nhl');
+      console.log('clay-customFn: sport changed -> ' + newSport +
+        ', refetching team list');
       var xhr = new XMLHttpRequest();
       xhr.open('GET', companionUrl + '/api/sports/teams?sport=' + encodeURIComponent(newSport), true);
+      // Hard cap so a stalled fetch can't leave the picker silently
+      // un-refreshed. 5s matches the showConfiguration-side fetch and
+      // is well under any plausible user attention span.
+      xhr.timeout = 5000;
+      xhr.ontimeout = function() {
+        console.log('clay-customFn: teams fetch timeout for sport=' + newSport);
+      };
+      xhr.onerror = function() {
+        console.log('clay-customFn: teams fetch network error for sport=' + newSport);
+      };
       xhr.onload = function() {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            var data = JSON.parse(xhr.responseText);
-            if (Array.isArray(data)) {
-              allOptions = data.map(function(t) {
-                return { label: t.name + ' (' + t.abbreviation + ')', value: t.id };
-              });
-              // Sport changed — clear previous selections (different
-              // sport means different team IDs).
-              teamPicker.set([]);
-              teamPicker.config.options = allOptions;
-              applyFilter();
-            }
-          } catch (e) {}
+        if (xhr.status < 200 || xhr.status >= 300) {
+          console.log('clay-customFn: teams fetch status=' + xhr.status +
+            ' for sport=' + newSport);
+          return;
         }
+        var data;
+        try {
+          data = JSON.parse(xhr.responseText);
+        } catch (e) {
+          console.log('clay-customFn: teams JSON parse failed for sport=' +
+            newSport + ': ' + (e && e.message));
+          return;
+        }
+        if (!Array.isArray(data)) {
+          console.log('clay-customFn: teams payload not an array for sport=' +
+            newSport);
+          return;
+        }
+        allOptions = data.map(function(t) {
+          return { label: t.name + ' (' + t.abbreviation + ')', value: t.id };
+        });
+        console.log('clay-customFn: rebuilt picker with ' + allOptions.length +
+          ' options for sport=' + newSport);
+        // Sport changed — clear previous selections (different sport
+        // means different team IDs) and reset the search filter so the
+        // user immediately sees the full new list.
+        teamPicker.set([]);
+        if (searchItem) { searchItem.set(''); }
+        teamPicker.config.options = allOptions;
+        applyFilter();
       };
       xhr.send();
     });
