@@ -77,6 +77,13 @@ function buildSnapshotQuery() {
 function fetchSnapshot(cb) {
   var xhr = new XMLHttpRequest();
   xhr.open('GET', COMPANION_URL + '/api/sports/games' + buildSnapshotQuery(), true);
+  // Hard cap so a stalled snapshot fetch can't kill the polling loop.
+  // Without this, a TCP-level stall leaves tick()'s callback un-fired
+  // and scheduleNext() is never called, so the loop dies silently.
+  // Wider than the settings page's 5s because this fetch isn't
+  // user-blocking — tick()'s err branch will retry via scheduleNext(true).
+  xhr.timeout = 10000;
+  xhr.ontimeout = function() { cb(new Error('snapshot timeout'), []); };
   xhr.onload = function() {
     if (xhr.status >= 200 && xhr.status < 300) {
       try {
