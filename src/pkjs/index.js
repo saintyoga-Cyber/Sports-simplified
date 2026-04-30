@@ -109,7 +109,10 @@ function buildBody(game) {
   if (game.state === 'final') return 'Final: ' + score;
   if (game.state === 'postponed') return 'Postponed: ' + away + ' @ ' + home;
   if (game.state === 'canceled') return 'Canceled: ' + away + ' @ ' + home;
-  if (game.state === 'scheduled') {
+  // Server emits 'pre-game' for upcoming games (see
+  // shared/schema.ts GameState). Accept 'scheduled' too as a
+  // forward-compat alias.
+  if (game.state === 'pre-game' || game.state === 'scheduled') {
     return 'Scheduled: ' + away + ' @ ' + home + ' — ' +
       formatStartTime(game.startTime);
   }
@@ -199,12 +202,14 @@ function tick() {
         delete pushedScheduledIds[game.gameId];
         pushPin(game, 'live');
         stillLive = true;
-      } else if (game.state === 'scheduled') {
-        // Push a pre-game pin once per session for any scheduled game
+      } else if (game.state === 'pre-game' || game.state === 'scheduled') {
+        // Push a pre-game pin once per session for any upcoming game
         // whose start time is within the next 48 hours. Pin id is
         // 'sports-' + gameId, so when the game later transitions to
         // in-game the live pushPin overwrites this pre-game pin in
-        // place on the timeline.
+        // place on the timeline. The server's GameState enum (see
+        // shared/schema.ts) uses 'pre-game'; 'scheduled' is accepted
+        // as a forward-compat alias.
         if (!pushedScheduledIds[game.gameId]) {
           var startMs = game.startTime ? new Date(game.startTime).getTime() : NaN;
           if (!isNaN(startMs)) {
