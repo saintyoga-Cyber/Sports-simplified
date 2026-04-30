@@ -1,10 +1,17 @@
-// Timeline API - Rebble Services
-// Uses Rebble timeline API for pin delivery
+// Timeline API — Core Devices local timeline endpoint.
+//
+// The previous Rebble cloud endpoint (https://timeline-api.rebble.io/)
+// no longer works for users who migrated to the Core Devices iPhone
+// app. Core Devices delivers pins through pebble.com instead.
+// TODO: verify Core Devices local timeline endpoint — if pin pushes
+// start failing for migrated users, this URL is the first thing to
+// audit. Every push attempt logs URL/status/response so failures are
+// visible in the JS console.
 
-var TIMELINE_API_URL = 'https://timeline-api.rebble.io/';
+var TIMELINE_API_URL = 'https://timeline.pebble.com/';
 
 /**
- * Send a request to the Rebble timeline API.
+ * Send a request to the timeline API.
  * @param pin The JSON pin to insert. Must contain 'id' field.
  * @param type The type of request, either PUT or DELETE.
  * @param callback The callback to receive the responseText after the request has completed.
@@ -12,10 +19,17 @@ var TIMELINE_API_URL = 'https://timeline-api.rebble.io/';
 function timelineRequest(pin, type, callback) {
   var url = TIMELINE_API_URL + 'v1/user/pins/' + pin.id;
 
-  console.log('timeline: sending ' + type + ' request to Rebble API');
+  console.log('timeline: sending ' + type + ' request');
   console.log('timeline: URL: ' + url);
 
   var xhr = new XMLHttpRequest();
+  // Hard cap so a stalled timeline push doesn't silently drop the
+  // request. Mirrors the snapshot fetch in index.js.
+  xhr.timeout = 10000;
+  xhr.ontimeout = function () {
+    console.log('timeline: request timeout for ' + url);
+    callback('{"error": "timeout"}', 0);
+  };
   xhr.onload = function () {
     console.log('timeline: response status: ' + this.status);
     console.log('timeline: response: ' + this.responseText);
@@ -34,8 +48,8 @@ function timelineRequest(pin, type, callback) {
     xhr.setRequestHeader('X-User-Token', '' + token);
     xhr.send(JSON.stringify(pin));
     console.log('timeline: request sent');
-  }, function(error) { 
-    console.log('timeline: ERROR getting token: ' + error); 
+  }, function(error) {
+    console.log('timeline: ERROR getting token: ' + error);
     callback('{"error": "Failed to get timeline token: ' + error + '"}', 0);
   });
 }

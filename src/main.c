@@ -1,9 +1,20 @@
 #include <pebble.h>
 
+#define MSG_SPORTS_APP_OPEN 2
+#define MSG_SPORTS_APP_EXIT 3
+
 static Window *s_main_window;
 static TextLayer *s_title_layer;
 static TextLayer *s_status_layer;
 static TextLayer *s_info_layer;
+
+static void send_lifecycle_msg(uint32_t key) {
+  DictionaryIterator *iter;
+  if (app_message_outbox_begin(&iter) == APP_MSG_OK) {
+    dict_write_uint8(iter, key, 1);
+    app_message_outbox_send();
+  }
+}
 
 static void main_window_load(Window *window) {
   Layer *window_layer = window_get_root_layer(window);
@@ -24,7 +35,7 @@ static void main_window_load(Window *window) {
   layer_add_child(window_layer, text_layer_get_layer(s_status_layer));
   
   s_info_layer = text_layer_create(GRect(10, 120, bounds.size.w - 20, 40));
-  text_layer_set_text(s_info_layer, "VAN | MTL");
+  text_layer_set_text(s_info_layer, "Open settings to pick your teams");
   text_layer_set_font(s_info_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
   text_layer_set_text_alignment(s_info_layer, GTextAlignmentCenter);
   text_layer_set_background_color(s_info_layer, GColorClear);
@@ -46,9 +57,13 @@ static void init(void) {
   });
   
   window_stack_push(s_main_window, true);
+
+  app_message_open(64, 64);
+  send_lifecycle_msg(MSG_SPORTS_APP_OPEN);
 }
 
 static void deinit(void) {
+  send_lifecycle_msg(MSG_SPORTS_APP_EXIT);
   window_destroy(s_main_window);
 }
 

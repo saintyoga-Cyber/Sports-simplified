@@ -1,11 +1,11 @@
 var timeline = require('./timeline');
-var Clay = require('./clay');
-var buildClayConfig = require('./clay-config');
 
 var COMPANION_URL = 'https://pebble-connect--saintyoga1.replit.app';
 var POLL_INTERVAL_MS = 2 * 60 * 1000;
 
-// localStorage keys for Clay-driven settings.
+// localStorage keys for persisted settings (written by the
+// webviewclosed handler after the user saves on the hosted
+// settings page).
 var LS_SPORT = 'sports_selected_sport';
 var LS_TEAMS = 'sports_followed_teams';
 
@@ -28,36 +28,11 @@ function getSavedTeamIds() {
   }
 }
 
-// Clay needs a config object at construction time. Start with an empty
-// teams list — we rebuild and overwrite clay.config on every settings
-// open so the team picker is always populated from the live server.
-//
-// The customFn runs INSIDE the Clay webview on the phone (not in pkjs).
-// Clay serialises it via .toString() before injecting into the webview,
-// so closures/free variables from this scope do NOT survive. We build
-// a self-contained Function whose body has COMPANION_URL inlined as a
-// string literal.
-// clay-config.clayCustomFn is a FACTORY: clayCustomFn(companionUrl)
-// returns the actual handler that Clay should invoke with `this` set
-// to the Clay instance. We must (a) call the factory with the URL,
-// then (b) call the returned handler with the Clay context.
-var clayCustomFnBody =
-  '((' + buildClayConfig.clayCustomFn.toString() + ')(' +
-  JSON.stringify(COMPANION_URL) + ')).call(this);';
-// eslint-disable-next-line no-new-func
-var clayCustomFn = new Function(clayCustomFnBody);
-
-var clay = new Clay(
-  buildClayConfig({ sport: 'nhl', teams: [], followedTeamIds: [] }),
-  clayCustomFn,
-  { autoHandleEvents: false }
-);
-
 var pollTimer = null;
 // Master gate. Any in-flight fetch callback that resolves after
 // stopPolling() must NOT be allowed to schedule another tick.
 var isPollingActive = false;
-// gameIds we've seen in 'in-game' state and not yet finalised on Rebble.
+// gameIds we've seen in 'in-game' state and not yet finalised.
 var activeGameIds = {};
 // gameIds we've already pushed a terminal-state pin for this session,
 // so we don't spam final/postponed/canceled pins on every tick.
@@ -80,8 +55,6 @@ function fetchSnapshot(cb) {
   // Hard cap so a stalled snapshot fetch can't kill the polling loop.
   // Without this, a TCP-level stall leaves tick()'s callback un-fired
   // and scheduleNext() is never called, so the loop dies silently.
-  // Wider than the settings page's 5s because this fetch isn't
-  // user-blocking — tick()'s err branch will retry via scheduleNext(true).
   xhr.timeout = 10000;
   xhr.ontimeout = function() { cb(new Error('snapshot timeout'), []); };
   xhr.onload = function() {
@@ -262,9 +235,11 @@ function readKey(payload, name) {
   return undefined;
 }
 
-// Indices MUST match pebble.messageKeys in package.json. SPORT (0) and
-// TEAMS (1) are owned by Clay; SPORTS_APP_OPEN (2) and SPORTS_APP_EXIT
-// (3) are the C-side appmessage lifecycle keys.
+// Indices MUST match pebble.messageKeys in package.json.
+// SPORTS_APP_OPEN (2) and SPORTS_APP_EXIT (3) are the C-side
+// appmessage lifecycle keys. The SPORT (0) and TEAMS (1) entries
+// in the manifest are legacy — settings now flow through the
+// hosted /settings page and webviewclosed JSON, not appmessage.
 var MESSAGE_KEYS_INDEX = {
   SPORTS_APP_OPEN: 2,
   SPORTS_APP_EXIT: 3
@@ -295,100 +270,34 @@ Pebble.addEventListener('appmessage', function(e) {
   }
 });
 
-// ---------- Clay-driven settings ----------
-
-function fetchTeamsForSport(sport, cb) {
-  var xhr = new XMLHttpRequest();
-  xhr.open(
-    'GET',
-    COMPANION_URL + '/api/sports/teams?sport=' + encodeURIComponent(sport),
-    true
-  );
-  // Hard cap so a stalled fetch can't leave the settings page hanging
-  // on a black screen. The showConfiguration handler swaps in an empty
-  // team list on error and still calls Pebble.openURL, so the page
-  // opens (just without team checkboxes) instead of never appearing.
-  xhr.timeout = 5000;
-  xhr.ontimeout = function() { cb(new Error('timeout'), []); };
-  xhr.onload = function() {
-    if (xhr.status >= 200 && xhr.status < 300) {
-      try {
-        var data = JSON.parse(xhr.responseText);
-        cb(null, Array.isArray(data) ? data : []);
-      } catch (e) {
-        cb(e, []);
-      }
-    } else {
-      cb(new Error('teams status ' + xhr.status), []);
-    }
-  };
-  xhr.onerror = function() { cb(new Error('teams network error'), []); };
-  xhr.send();
-}
+// ---------- Settings (hosted on companion server) ----------
 
 Pebble.addEventListener('showConfiguration', function() {
-  // Clay is constructed with autoHandleEvents:false so we can fetch the
-  // live team list from the companion server first, rebuild the config
-  // dynamically, and then hand the URL to Pebble.openURL ourselves.
   var sport = getSavedSport() || 'nhl';
-  var followed = getSavedTeamIds();
-
-  console.log('sports: showConfiguration — fetching teams for sport=' + sport);
-  fetchTeamsForSport(sport, function(err, teams) {
-    console.log('sports: showConfiguration teams callback err=' +
-      (err && err.message ? err.message : 'none') +
-      ' teams.length=' + (teams ? teams.length : 0));
-    if (err) {
-      console.log('sports: settings teams fetch failed: ' + err.message +
-        ' — falling back to empty team list');
-      teams = [];
-    }
-    clay.config = buildClayConfig({
-      sport: sport,
-      teams: teams,
-      followedTeamIds: followed
-    });
-    var settingsUrl = clay.generateUrl();
-    console.log('sports: clay.generateUrl() = ' +
-      (settingsUrl ? settingsUrl.substring(0, 200) : '(empty)'));
-    Pebble.openURL(settingsUrl);
-  });
+  var teams = getSavedTeamIds();
+  var base = COMPANION_URL + '/settings';
+  var params = 'sport=' + encodeURIComponent(sport) +
+               '&teams=' + encodeURIComponent(teams.join(','));
+  Pebble.openURL(base + '?' + params);
 });
 
 Pebble.addEventListener('webviewclosed', function(e) {
-  // Settings webview closed. Do NOT stop polling here — settings can be
-  // opened mid-session while a live game is being tracked. The poll
-  // loop is gated by SPORTS_APP_EXIT (from C) or natural drain when no
-  // live games remain.
-  if (!e || !e.response) {
-    console.log('sports: webviewclosed (cancelled, no payload)');
-    return;
-  }
-
+  if (!e || !e.response) return;
   var settings;
   try {
-    settings = clay.getSettings(e.response);
+    settings = JSON.parse(decodeURIComponent(e.response));
   } catch (err) {
-    console.log('sports: clay.getSettings failed: ' + err.message);
+    console.log('sports: webviewclosed parse error: ' + err.message);
     return;
   }
-
-  if (!settings) {
-    console.log('sports: webviewclosed (no settings parsed)');
-    return;
-  }
-
-  // Clay wraps each value as { value: ... } for messageKey-mapped items.
-  function unwrap(v) { return v && typeof v === 'object' && 'value' in v ? v.value : v; }
-  var sport = unwrap(settings.SPORT);
-  var teams = unwrap(settings.TEAMS);
-
-  if (sport === 'nhl' || sport === 'fifa-wc') {
-    try { localStorage.setItem(LS_SPORT, sport); } catch (err) {}
+  var sport = settings && settings.SPORT;
+  var teams = settings && settings.TEAMS;
+  if (sport && typeof sport === 'string' && sport.length > 0) {
+    try { localStorage.setItem(LS_SPORT, sport); } catch (e2) {}
     console.log('sports: saved sport=' + sport);
   }
   if (Array.isArray(teams)) {
-    try { localStorage.setItem(LS_TEAMS, JSON.stringify(teams)); } catch (err) {}
-    console.log('sports: saved followed teams=' + teams.join(','));
+    try { localStorage.setItem(LS_TEAMS, JSON.stringify(teams)); } catch (e2) {}
+    console.log('sports: saved teams=' + teams.join(','));
   }
 });
