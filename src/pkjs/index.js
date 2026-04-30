@@ -37,6 +37,15 @@ var activeGameIds = {};
 // gameIds we've already pushed a terminal-state pin for this session,
 // so we don't spam final/postponed/canceled pins on every tick.
 var pushedFinalIds = {};
+// gameIds we've already pushed a scheduled-state pin for this session,
+// so we don't spam upcoming-game pins on every tick. Cleared per-id
+// when the game transitions to in-game, so the live pin overwrites
+// the scheduled pin on the timeline.
+var pushedScheduledIds = {};
+// Window in which an upcoming scheduled game is eligible for a pin.
+// Pebble's timeline already supports far-future pins, but capping at
+// 48h keeps the watch's pin set focused on near-term games.
+var SCHEDULED_WINDOW_MS = 48 * 60 * 60 * 1000;
 
 // ---------- snapshot fetch ----------
 
@@ -80,6 +89,18 @@ function teamLabel(team) {
   return team.abbreviation || team.shortDisplayName || team.displayName || '';
 }
 
+// Format an ISO 8601 start time as "MM/DD HH:MM" in the phone's local
+// timezone. PebbleKit JS Date methods are reliable for getMonth/Date/
+// Hours/Minutes; toLocaleString is not, so we hand-roll the format.
+function formatStartTime(iso) {
+  if (!iso) return '';
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
+  var pad = function(n) { return n < 10 ? '0' + n : '' + n; };
+  return pad(d.getMonth() + 1) + '/' + pad(d.getDate()) + ' ' +
+    pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
 function buildBody(game) {
   var away = teamLabel(game.awayTeam);
   var home = teamLabel(game.homeTeam);
@@ -88,6 +109,10 @@ function buildBody(game) {
   if (game.state === 'final') return 'Final: ' + score;
   if (game.state === 'postponed') return 'Postponed: ' + away + ' @ ' + home;
   if (game.state === 'canceled') return 'Canceled: ' + away + ' @ ' + home;
+  if (game.state === 'scheduled') {
+    return 'Scheduled: ' + away + ' @ ' + home + ' — ' +
+      formatStartTime(game.startTime);
+  }
   if (game.state === 'in-game') {
     var clockBits = [];
     if (game.period) clockBits.push(game.period);
@@ -167,8 +192,29 @@ function tick() {
       if (game.state === 'in-game') {
         activeGameIds[game.gameId] = true;
         delete pushedFinalIds[game.gameId];
+        // Drop any prior scheduled-pin bookkeeping for this game so a
+        // future scheduled state (rare but possible on data corrections)
+        // would re-push, and so the live pushPin's same-id overwrite
+        // semantically replaces the scheduled pin on the timeline.
+        delete pushedScheduledIds[game.gameId];
         pushPin(game, 'live');
         stillLive = true;
+      } else if (game.state === 'scheduled') {
+        // Push a pre-game pin once per session for any scheduled game
+        // whose start time is within the next 48 hours. Pin id is
+        // 'sports-' + gameId, so when the game later transitions to
+        // in-game the live pushPin overwrites this pre-game pin in
+        // place on the timeline.
+        if (!pushedScheduledIds[game.gameId]) {
+          var startMs = game.startTime ? new Date(game.startTime).getTime() : NaN;
+          if (!isNaN(startMs)) {
+            var diffMs = startMs - Date.now();
+            if (diffMs >= 0 && diffMs <= SCHEDULED_WINDOW_MS) {
+              pushPin(game, 'scheduled');
+              pushedScheduledIds[game.gameId] = true;
+            }
+          }
+        }
       } else if (game.state === 'final' || game.state === 'postponed' ||
                  game.state === 'canceled') {
         // Push a terminal pin once per session per gameId. Covers both:
@@ -208,6 +254,7 @@ function startPolling() {
   // be silently skipped.
   activeGameIds = {};
   pushedFinalIds = {};
+  pushedScheduledIds = {};
   isPollingActive = true;
   tick();
 }
