@@ -41,7 +41,12 @@ function getSavedFollowed() {
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         return parsed;
       }
-      return {};
+      // LS_FOLLOWED exists but is corrupted (malformed JSON or wrong
+      // shape). Clear it so we don't keep returning {} forever; if
+      // legacy keys are still around, fall through to migrate from
+      // those instead of staying permanently empty.
+      try { localStorage.removeItem(LS_FOLLOWED); } catch (eClear) {}
+      console.log('sports: LS_FOLLOWED corrupted — discarded');
     }
     var oldSport = localStorage.getItem(LS_SPORT_LEGACY);
     var oldTeamsRaw = localStorage.getItem(LS_TEAMS_LEGACY);
