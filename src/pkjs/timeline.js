@@ -1,14 +1,11 @@
-// Timeline API — Core Devices local timeline endpoint.
+// Timeline API — Rebble timeline service.
 //
-// The previous Rebble cloud endpoint (https://timeline-api.rebble.io/)
-// no longer works for users who migrated to the Core Devices iPhone
-// app. Core Devices delivers pins through pebble.com instead.
-// TODO: verify Core Devices local timeline endpoint — if pin pushes
-// start failing for migrated users, this URL is the first thing to
-// audit. Every push attempt logs URL/status/response so failures are
-// visible in the JS console.
+// Core Devices users still go through the Rebble timeline service
+// (confirmed by a working sibling companion app on the same device).
+// Every push attempt logs URL/status/response so any future failure
+// mode is visible in the JS console.
 
-var TIMELINE_API_URL = 'https://timeline.pebble.com/';
+var TIMELINE_API_URL = 'https://timeline-api.rebble.io/';
 
 /**
  * Send a request to the timeline API.
