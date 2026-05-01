@@ -23,8 +23,20 @@ static void send_lifecycle_msg(uint32_t key) {
 // instance of the requested hour/minute, so the smaller of the two
 // returned values is the next 4am-or-4pm boundary.
 static time_t next_4am_or_4pm(void) {
+  // clock_to_timestamp(TODAY, ...) is documented to return the next
+  // future occurrence, but on real hardware it can hand back today's
+  // hour even after that hour has already passed. The explicit past-
+  // check below makes the result strictly future regardless: if a
+  // candidate is at-or-before now, roll it forward by a day. Without
+  // this, picking the smaller of the two would yield a past timestamp
+  // and wakeup_schedule() would return E_INVALID_ARGUMENT (-4), which
+  // the +60s retry in schedule_next_wakeup can't recover from when
+  // the timestamp is hours in the past.
+  time_t now  = time(NULL);
   time_t t4am = clock_to_timestamp(TODAY, 4, 0);
   time_t t4pm = clock_to_timestamp(TODAY, 16, 0);
+  if (t4am <= now) t4am += SECONDS_PER_DAY;
+  if (t4pm <= now) t4pm += SECONDS_PER_DAY;
   return (t4am < t4pm) ? t4am : t4pm;
 }
 
