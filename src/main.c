@@ -37,14 +37,25 @@ static void schedule_next_wakeup(void) {
   // notify_if_missed=true so a wakeup that fires while the watch is
   // powered off still triggers when the watch boots back up.
   WakeupId id = wakeup_schedule(when, 0, true);
+  // wakeup_schedule can return E_RANGE if the requested slot is too
+  // close to a wakeup belonging to another app. wakeup_cancel_all()
+  // only clears OUR app's slots, so cross-app collisions are still
+  // possible. Bump the timestamp by 60s up to a few times to find a
+  // free slot rather than dropping the wakeup entirely.
+  int retries = 0;
+  while (id < 0 && retries < 5) {
+    when += 60;
+    id = wakeup_schedule(when, 0, true);
+    retries++;
+  }
   if (id < 0) {
     APP_LOG(APP_LOG_LEVEL_ERROR,
-            "wakeup_schedule failed: %ld at %ld",
-            (long)id, (long)when);
+            "wakeup_schedule failed after %d retries: %ld",
+            retries, (long)id);
   } else {
     APP_LOG(APP_LOG_LEVEL_INFO,
-            "wakeup id=%ld scheduled for %ld",
-            (long)id, (long)when);
+            "wakeup id=%ld scheduled for %ld (retries=%d)",
+            (long)id, (long)when, retries);
   }
 }
 

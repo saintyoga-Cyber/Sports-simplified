@@ -242,9 +242,23 @@ function tick() {
       // and schedules the next wakeup at the upcoming 4am or 4pm; the
       // watchapp re-launches at that time and SPORTS_APP_OPEN flows back
       // through the appmessage handler to startPolling() again.
+      //
+      // CRITICAL: stopPolling() must run only after C acks the send.
+      // If we stop unconditionally and the AppMessage drops, C never
+      // schedules a wakeup and the autonomous loop is dead until the
+      // user manually relaunches. On send failure we keep the JS poll
+      // loop alive (scheduleNext) so the next tick re-attempts the
+      // handoff using the existing 2-minute retry cadence.
       console.log('sports: no live games — notifying C, awaiting next wakeup');
-      sendPollResult(0);
-      stopPolling();
+      sendPollResult(0, function(err) {
+        if (!isPollingActive) return;
+        if (err) {
+          console.log('sports: SPORTS_POLL_RESULT failed — retrying on next tick');
+          scheduleNext(true);
+        } else {
+          stopPolling();
+        }
+      });
     }
   });
 }
@@ -310,13 +324,21 @@ var MESSAGE_KEYS_INDEX = {
 // schedule a wakeup. Currently we only send 0 (the "go idle, please
 // wake me at the next 4am/4pm" signal); a future change could send
 // the live count to let C reason about active polling sessions.
-function sendPollResult(count) {
+// Invokes onSent(null) on ack from C, or onSent(Error) on failure;
+// callers MUST wait for the ack before stopPolling(), otherwise a
+// dropped send leaves C without a wakeup scheduled and breaks the
+// autonomous loop.
+function sendPollResult(count, onSent) {
   Pebble.sendAppMessage(
     { 'SPORTS_POLL_RESULT': count },
-    function() { console.log('sports: SPORTS_POLL_RESULT=' + count + ' sent'); },
+    function() {
+      console.log('sports: SPORTS_POLL_RESULT=' + count + ' sent');
+      if (onSent) onSent(null);
+    },
     function(e) {
       var msg = (e && e.error && e.error.message) || 'unknown';
       console.log('sports: SPORTS_POLL_RESULT send failed: ' + msg);
+      if (onSent) onSent(new Error(msg));
     }
   );
 }
