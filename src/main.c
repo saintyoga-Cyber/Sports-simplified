@@ -19,19 +19,18 @@ static void send_lifecycle_msg(uint32_t key) {
 
 // Compute the next absolute timestamp at which the wall-clock crosses
 // 04:00 or 16:00 local time, whichever comes first from "now".
-// clock_to_timestamp(TODAY, ...) already rolls forward to the next
-// instance of the requested hour/minute, so the smaller of the two
-// returned values is the next 4am-or-4pm boundary.
+//
+// clock_to_timestamp(TODAY, ...) is *documented* to return the next
+// future occurrence of the requested wall-clock time, but on real
+// hardware it can hand back today's hour even after that hour has
+// already passed. So we explicitly compare each candidate against
+// time(NULL) and roll it forward by a day when needed; that guarantees
+// the returned value is strictly in the future. Without this guard,
+// picking min(t4am, t4pm) at e.g. 10am would yield today's 4am (past),
+// and wakeup_schedule() would return E_INVALID_ARGUMENT (-4) — which
+// the +60s retry in schedule_next_wakeup can't recover from when the
+// timestamp is hours in the past.
 static time_t next_4am_or_4pm(void) {
-  // clock_to_timestamp(TODAY, ...) is documented to return the next
-  // future occurrence, but on real hardware it can hand back today's
-  // hour even after that hour has already passed. The explicit past-
-  // check below makes the result strictly future regardless: if a
-  // candidate is at-or-before now, roll it forward by a day. Without
-  // this, picking the smaller of the two would yield a past timestamp
-  // and wakeup_schedule() would return E_INVALID_ARGUMENT (-4), which
-  // the +60s retry in schedule_next_wakeup can't recover from when
-  // the timestamp is hours in the past.
   time_t now  = time(NULL);
   time_t t4am = clock_to_timestamp(TODAY, 4, 0);
   time_t t4pm = clock_to_timestamp(TODAY, 16, 0);
