@@ -27,11 +27,17 @@ var LS_TEAMS_LEGACY = 'sports_followed_teams';
 // the new shape, seeds LS_ACTIVE_SPORT from the old LS_SPORT_LEGACY,
 // and removes both legacy keys so subsequent reads see only the new
 // shape. Always returns a plain object (possibly empty).
+function clearLegacyKeys() {
+  try { localStorage.removeItem(LS_SPORT_LEGACY); } catch (e1) {}
+  try { localStorage.removeItem(LS_TEAMS_LEGACY); } catch (e2) {}
+}
+
 function getSavedFollowed() {
   try {
     var raw = localStorage.getItem(LS_FOLLOWED);
     if (raw) {
-      var parsed = JSON.parse(raw);
+      var parsed;
+      try { parsed = JSON.parse(raw); } catch (eParse) { parsed = null; }
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
         return parsed;
       }
@@ -39,18 +45,31 @@ function getSavedFollowed() {
     }
     var oldSport = localStorage.getItem(LS_SPORT_LEGACY);
     var oldTeamsRaw = localStorage.getItem(LS_TEAMS_LEGACY);
-    if (oldSport && oldTeamsRaw) {
-      var oldTeams = JSON.parse(oldTeamsRaw);
-      if (Array.isArray(oldTeams)) {
-        var migrated = {};
-        migrated[oldSport] = oldTeams;
-        try { localStorage.setItem(LS_FOLLOWED, JSON.stringify(migrated)); } catch (e1) {}
-        try { localStorage.setItem(LS_ACTIVE_SPORT, oldSport); } catch (e2) {}
-        try { localStorage.removeItem(LS_SPORT_LEGACY); } catch (e3) {}
-        try { localStorage.removeItem(LS_TEAMS_LEGACY); } catch (e4) {}
-        console.log('sports: migrated legacy settings to multi-sport followed map');
-        return migrated;
+    if (oldSport || oldTeamsRaw) {
+      // Either or both legacy keys present. Try to migrate; if the
+      // payload is malformed (or only one key is set), still clear
+      // the legacy keys so subsequent reads don't keep trying to
+      // re-migrate the same dead data on every poll tick.
+      var migrated = {};
+      var migratedOk = false;
+      if (oldSport && oldTeamsRaw) {
+        try {
+          var oldTeams = JSON.parse(oldTeamsRaw);
+          if (Array.isArray(oldTeams)) {
+            migrated[oldSport] = oldTeams;
+            migratedOk = true;
+          }
+        } catch (eOld) {}
       }
+      try { localStorage.setItem(LS_FOLLOWED, JSON.stringify(migrated)); } catch (e1) {}
+      if (migratedOk) {
+        try { localStorage.setItem(LS_ACTIVE_SPORT, oldSport); } catch (e2) {}
+        console.log('sports: migrated legacy settings to multi-sport followed map');
+      } else {
+        console.log('sports: legacy settings malformed — discarded');
+      }
+      clearLegacyKeys();
+      return migrated;
     }
     return {};
   } catch (e) {
