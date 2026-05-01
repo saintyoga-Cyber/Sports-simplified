@@ -237,7 +237,13 @@ function tick() {
     if (stillLive) {
       scheduleNext(false);
     } else {
-      console.log('sports: no live games — stopping poll loop');
+      // No live games — hand off to C's wakeup scheduler instead of
+      // staying in the local JS poll loop. C receives SPORTS_POLL_RESULT=0
+      // and schedules the next wakeup at the upcoming 4am or 4pm; the
+      // watchapp re-launches at that time and SPORTS_APP_OPEN flows back
+      // through the appmessage handler to startPolling() again.
+      console.log('sports: no live games — notifying C, awaiting next wakeup');
+      sendPollResult(0);
       stopPolling();
     }
   });
@@ -289,13 +295,31 @@ function readKey(payload, name) {
 
 // Indices MUST match pebble.messageKeys in package.json.
 // SPORTS_APP_OPEN (2) and SPORTS_APP_EXIT (3) are the C-side
-// appmessage lifecycle keys. The SPORT (0) and TEAMS (1) entries
-// in the manifest are legacy — settings now flow through the
-// hosted /settings page and webviewclosed JSON, not appmessage.
+// appmessage lifecycle keys. SPORTS_POLL_RESULT (4) carries the
+// live-game count back to C so it can schedule the next wakeup.
+// The SPORT (0) and TEAMS (1) entries in the manifest are legacy —
+// settings now flow through the hosted /settings page and
+// webviewclosed JSON, not appmessage.
 var MESSAGE_KEYS_INDEX = {
   SPORTS_APP_OPEN: 2,
-  SPORTS_APP_EXIT: 3
+  SPORTS_APP_EXIT: 3,
+  SPORTS_POLL_RESULT: 4
 };
+
+// Notify C of the live-game count so it can decide whether to
+// schedule a wakeup. Currently we only send 0 (the "go idle, please
+// wake me at the next 4am/4pm" signal); a future change could send
+// the live count to let C reason about active polling sessions.
+function sendPollResult(count) {
+  Pebble.sendAppMessage(
+    { 'SPORTS_POLL_RESULT': count },
+    function() { console.log('sports: SPORTS_POLL_RESULT=' + count + ' sent'); },
+    function(e) {
+      var msg = (e && e.error && e.error.message) || 'unknown';
+      console.log('sports: SPORTS_POLL_RESULT send failed: ' + msg);
+    }
+  );
+}
 
 Pebble.addEventListener('ready', function() {
   console.log('Sports Simplified pkjs ready');

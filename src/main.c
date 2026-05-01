@@ -2,6 +2,7 @@
 
 #define MSG_SPORTS_APP_OPEN 2
 #define MSG_SPORTS_APP_EXIT 3
+#define MSG_SPORTS_POLL_RESULT 4
 
 static Window *s_main_window;
 static TextLayer *s_title_layer;
@@ -14,6 +15,64 @@ static void send_lifecycle_msg(uint32_t key) {
     dict_write_uint8(iter, key, 1);
     app_message_outbox_send();
   }
+}
+
+// Compute the next absolute timestamp at which the wall-clock crosses
+// 04:00 or 16:00 local time, whichever comes first from "now".
+// clock_to_timestamp(TODAY, ...) already rolls forward to the next
+// instance of the requested hour/minute, so the smaller of the two
+// returned values is the next 4am-or-4pm boundary.
+static time_t next_4am_or_4pm(void) {
+  time_t t4am = clock_to_timestamp(TODAY, 4, 0);
+  time_t t4pm = clock_to_timestamp(TODAY, 16, 0);
+  return (t4am < t4pm) ? t4am : t4pm;
+}
+
+static void schedule_next_wakeup(void) {
+  // Drop any prior pending wakeup so we never accumulate duplicates;
+  // the latest poll result is always the source of truth for "when
+  // should we run next".
+  wakeup_cancel_all();
+  time_t when = next_4am_or_4pm();
+  // notify_if_missed=true so a wakeup that fires while the watch is
+  // powered off still triggers when the watch boots back up.
+  WakeupId id = wakeup_schedule(when, 0, true);
+  if (id < 0) {
+    APP_LOG(APP_LOG_LEVEL_ERROR,
+            "wakeup_schedule failed: %ld at %ld",
+            (long)id, (long)when);
+  } else {
+    APP_LOG(APP_LOG_LEVEL_INFO,
+            "wakeup id=%ld scheduled for %ld",
+            (long)id, (long)when);
+  }
+}
+
+static void inbox_received_handler(DictionaryIterator *iter, void *context) {
+  Tuple *poll_result = dict_find(iter, MSG_SPORTS_POLL_RESULT);
+  if (poll_result) {
+    // pkjs sends this as an integer; read as int32 to cover signed
+    // and small unsigned values uniformly.
+    int32_t live_count = poll_result->value->int32;
+    APP_LOG(APP_LOG_LEVEL_INFO, "SPORTS_POLL_RESULT=%d", (int)live_count);
+    if (live_count == 0) {
+      // pkjs is going idle — schedule the next background poll so we
+      // re-launch the app at the upcoming 4am/4pm and start the cycle
+      // over.
+      schedule_next_wakeup();
+    }
+  }
+}
+
+static void wakeup_handler(WakeupId wakeup_id, int32_t reason) {
+  // Wakeup fired while the app was already running. We don't need to
+  // do anything special here — init() already detected the launch
+  // reason on background-launch starts and dispatched SPORTS_APP_OPEN
+  // to pkjs, which will tick once and then send SPORTS_POLL_RESULT
+  // back so we can chain the next wakeup.
+  APP_LOG(APP_LOG_LEVEL_INFO,
+          "wakeup fired id=%ld reason=%d",
+          (long)wakeup_id, (int)reason);
 }
 
 static void main_window_load(Window *window) {
@@ -58,7 +117,22 @@ static void init(void) {
   
   window_stack_push(s_main_window, true);
 
+  // Register inbox handler BEFORE opening AppMessage so we don't miss
+  // a SPORTS_POLL_RESULT that arrives in the very first window.
+  app_message_register_inbox_received(inbox_received_handler);
   app_message_open(64, 64);
+
+  // Subscribe so wakeup events that fire while we're running can be
+  // observed. The launch-reason check below covers the separate case
+  // where *this* run was triggered by a wakeup.
+  wakeup_service_subscribe(wakeup_handler);
+
+  if (launch_reason() == APP_LAUNCH_WAKEUP) {
+    APP_LOG(APP_LOG_LEVEL_INFO, "launched via wakeup — kicking pkjs poll");
+  }
+  // SPORTS_APP_OPEN goes to pkjs on every launch (foreground user-tap
+  // and background wakeup alike). startPolling() in pkjs is idempotent,
+  // so this is safe alongside the 'ready' event already handled there.
   send_lifecycle_msg(MSG_SPORTS_APP_OPEN);
 }
 
