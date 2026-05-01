@@ -6,26 +6,75 @@ var POLL_INTERVAL_MS = 2 * 60 * 1000;
 // localStorage keys for persisted settings (written by the
 // webviewclosed handler after the user saves on the hosted
 // settings page).
-var LS_SPORT = 'sports_selected_sport';
-var LS_TEAMS = 'sports_followed_teams';
+//
+// LS_FOLLOWED holds the multi-sport map of the user's followed-team
+// selections, keyed by sport id, e.g. { "nhl": ["10"], "fifa-wc":
+// ["CAN"] }. LS_ACTIVE_SPORT holds the sport id the user most
+// recently saved on the settings page; it drives buildSnapshotQuery
+// and sportIcon so the watch keeps polling/displaying one sport at
+// a time even though the followed map can carry several.
+//
+// LS_SPORT_LEGACY and LS_TEAMS_LEGACY are the previous single-sport
+// keys, retained here only so getSavedFollowed() can perform a
+// one-shot migration on first read after upgrade.
+var LS_FOLLOWED = 'sports_followed';
+var LS_ACTIVE_SPORT = 'sports_active_sport';
+var LS_SPORT_LEGACY = 'sports_selected_sport';
+var LS_TEAMS_LEGACY = 'sports_followed_teams';
+
+// One-shot migration + read of the multi-sport followed map.
+// On first read after upgrade, copies the old single-sport keys into
+// the new shape, seeds LS_ACTIVE_SPORT from the old LS_SPORT_LEGACY,
+// and removes both legacy keys so subsequent reads see only the new
+// shape. Always returns a plain object (possibly empty).
+function getSavedFollowed() {
+  try {
+    var raw = localStorage.getItem(LS_FOLLOWED);
+    if (raw) {
+      var parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed;
+      }
+      return {};
+    }
+    var oldSport = localStorage.getItem(LS_SPORT_LEGACY);
+    var oldTeamsRaw = localStorage.getItem(LS_TEAMS_LEGACY);
+    if (oldSport && oldTeamsRaw) {
+      var oldTeams = JSON.parse(oldTeamsRaw);
+      if (Array.isArray(oldTeams)) {
+        var migrated = {};
+        migrated[oldSport] = oldTeams;
+        try { localStorage.setItem(LS_FOLLOWED, JSON.stringify(migrated)); } catch (e1) {}
+        try { localStorage.setItem(LS_ACTIVE_SPORT, oldSport); } catch (e2) {}
+        try { localStorage.removeItem(LS_SPORT_LEGACY); } catch (e3) {}
+        try { localStorage.removeItem(LS_TEAMS_LEGACY); } catch (e4) {}
+        console.log('sports: migrated legacy settings to multi-sport followed map');
+        return migrated;
+      }
+    }
+    return {};
+  } catch (e) {
+    return {};
+  }
+}
 
 function getSavedSport() {
   try {
-    return localStorage.getItem(LS_SPORT) || '';
+    // Reading getSavedFollowed() first guarantees the legacy migration
+    // runs (and seeds LS_ACTIVE_SPORT) before we read LS_ACTIVE_SPORT.
+    getSavedFollowed();
+    return localStorage.getItem(LS_ACTIVE_SPORT) || '';
   } catch (e) {
     return '';
   }
 }
 
 function getSavedTeamIds() {
-  try {
-    var raw = localStorage.getItem(LS_TEAMS);
-    if (!raw) return [];
-    var parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
-    return [];
-  }
+  var followed = getSavedFollowed();
+  var sport = getSavedSport();
+  if (!sport) return [];
+  var teams = followed[sport];
+  return Array.isArray(teams) ? teams : [];
 }
 
 var pollTimer = null;
@@ -386,10 +435,13 @@ Pebble.addEventListener('appmessage', function(e) {
 
 Pebble.addEventListener('showConfiguration', function() {
   var sport = getSavedSport() || 'nhl';
-  var teams = getSavedTeamIds();
+  var followed = getSavedFollowed();
   var base = COMPANION_URL + '/settings';
+  // Send the active sport so the page opens on the right tab, plus
+  // the full multi-sport followed map so the page can pre-select
+  // each sport's saved teams as the user switches the dropdown.
   var params = 'sport=' + encodeURIComponent(sport) +
-               '&teams=' + encodeURIComponent(teams.join(','));
+               '&followed=' + encodeURIComponent(JSON.stringify(followed));
   Pebble.openURL(base + '?' + params);
 });
 
@@ -404,12 +456,21 @@ Pebble.addEventListener('webviewclosed', function(e) {
   }
   var sport = settings && settings.SPORT;
   var teams = settings && settings.TEAMS;
-  if (sport && typeof sport === 'string' && sport.length > 0) {
-    try { localStorage.setItem(LS_SPORT, sport); } catch (e2) {}
-    console.log('sports: saved sport=' + sport);
+  if (!sport || typeof sport !== 'string' || sport.length === 0) {
+    console.log('sports: webviewclosed missing SPORT — ignoring payload');
+    return;
   }
-  if (Array.isArray(teams)) {
-    try { localStorage.setItem(LS_TEAMS, JSON.stringify(teams)); } catch (e2) {}
-    console.log('sports: saved teams=' + teams.join(','));
+  if (!Array.isArray(teams)) {
+    console.log('sports: webviewclosed missing TEAMS array — ignoring payload');
+    return;
   }
+  // Merge the page's single-sport result into the persisted multi-sport
+  // map so editing one sport's selection never wipes the others.
+  var followed = getSavedFollowed();
+  followed[sport] = teams;
+  try { localStorage.setItem(LS_FOLLOWED, JSON.stringify(followed)); } catch (e2) {}
+  try { localStorage.setItem(LS_ACTIVE_SPORT, sport); } catch (e3) {}
+  console.log('sports: saved active sport=' + sport +
+              ' teams=' + teams.join(',') +
+              ' followed=' + JSON.stringify(followed));
 });
