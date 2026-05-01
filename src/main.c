@@ -32,7 +32,7 @@ static void send_lifecycle_msg(uint32_t key) {
 // timestamp is hours in the past.
 static time_t next_4am_or_4pm(void) {
   time_t now  = time(NULL);
-  time_t t4am = clock_to_timestamp(TODAY, 4, 0);
+  time_t t4am = clock_to_timestamp(TODAY, 4,  0);
   time_t t4pm = clock_to_timestamp(TODAY, 16, 0);
   if (t4am <= now) t4am += SECONDS_PER_DAY;
   if (t4pm <= now) t4pm += SECONDS_PER_DAY;
@@ -86,15 +86,17 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
   }
 }
 
+// Wakeup fired while the watchapp is already open. Background-launch
+// starts already kick pkjs from init() (via SPORTS_APP_OPEN), but in-app
+// wakeups don't go through init(), so without this handler the chain
+// would silently miss a tick. send_lifecycle_msg(SPORTS_APP_OPEN) is
+// safe regardless of pkjs state because startPolling() guards re-entry
+// with `if (isPollingActive) return`.
 static void wakeup_handler(WakeupId wakeup_id, int32_t reason) {
-  // Wakeup fired while the app was already running. We don't need to
-  // do anything special here — init() already detected the launch
-  // reason on background-launch starts and dispatched SPORTS_APP_OPEN
-  // to pkjs, which will tick once and then send SPORTS_POLL_RESULT
-  // back so we can chain the next wakeup.
   APP_LOG(APP_LOG_LEVEL_INFO,
-          "wakeup fired id=%ld reason=%d",
-          (long)wakeup_id, (int)reason);
+          "wakeup fired while app open id=%ld — triggering poll",
+          (long)wakeup_id);
+  send_lifecycle_msg(MSG_SPORTS_APP_OPEN);
 }
 
 static void main_window_load(Window *window) {
@@ -129,12 +131,21 @@ static void main_window_unload(Window *window) {
   text_layer_destroy(s_info_layer);
 }
 
+// Send SPORTS_APP_EXIT here, not from deinit(). deinit() runs after
+// app_event_loop() returns, so the async AppMessage outbox may never
+// flush; window_disappear runs while the event loop is still alive,
+// which guarantees pkjs sees the exit signal and calls stopPolling().
+static void main_window_disappear(Window *window) {
+  send_lifecycle_msg(MSG_SPORTS_APP_EXIT);
+}
+
 static void init(void) {
   s_main_window = window_create();
   
   window_set_window_handlers(s_main_window, (WindowHandlers) {
-    .load = main_window_load,
-    .unload = main_window_unload
+    .load      = main_window_load,
+    .unload    = main_window_unload,
+    .disappear = main_window_disappear
   });
   
   window_stack_push(s_main_window, true);
@@ -159,7 +170,6 @@ static void init(void) {
 }
 
 static void deinit(void) {
-  send_lifecycle_msg(MSG_SPORTS_APP_EXIT);
   window_destroy(s_main_window);
 }
 

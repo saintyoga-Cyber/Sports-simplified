@@ -132,6 +132,20 @@ function buildTitle(game) {
   return away + ' @ ' + home;
 }
 
+// Map the saved sport setting to the matching Pebble system tinyIcon.
+// Falls back to the generic SCHEDULED_EVENT icon for unknown values
+// (including the empty string a brand-new install has before the user
+// opens settings for the first time).
+function sportIcon() {
+  var sport = getSavedSport();
+  if (sport === 'nhl')      return 'system://images/HOCKEY_GAME';
+  if (sport === 'fifa-wc')  return 'system://images/SOCCER_GAME';
+  if (sport === 'nba')      return 'system://images/BASKETBALL_GAME';
+  if (sport === 'nfl')      return 'system://images/AMERICAN_FOOTBALL_GAME';
+  if (sport === 'mlb')      return 'system://images/BASEBALL_GAME';
+  return 'system://images/SCHEDULED_EVENT';
+}
+
 function createSportsPin(game) {
   return {
     id: 'sports-' + game.gameId,
@@ -140,7 +154,7 @@ function createSportsPin(game) {
       type: 'genericPin',
       title: buildTitle(game),
       body: buildBody(game),
-      tinyIcon: 'system://images/HOCKEY_GAME'
+      tinyIcon: sportIcon()
     }
   };
 }
