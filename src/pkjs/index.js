@@ -174,32 +174,26 @@ function formatStartTime(iso) {
     pad(d.getHours()) + ':' + pad(d.getMinutes());
 }
 
-function buildBody(game) {
-  var away = teamLabel(game.awayTeam);
-  var home = teamLabel(game.homeTeam);
-  var score = away + ' ' + game.awayScore + ' - ' + game.homeScore + ' ' + home;
-
-  if (game.state === 'final') return 'Final: ' + score;
-  if (game.state === 'postponed') return 'Postponed: ' + away + ' @ ' + home;
-  if (game.state === 'canceled') return 'Canceled: ' + away + ' @ ' + home;
+function buildSubtitle(game) {
+  if (game.state === 'final')     return 'Final';
+  if (game.state === 'postponed') return 'Postponed';
+  if (game.state === 'canceled')  return 'Canceled';
   // Server emits 'pre-game' for upcoming games (see
   // shared/schema.ts GameState). Accept 'scheduled' too as a
   // forward-compat alias.
   if (game.state === 'pre-game' || game.state === 'scheduled') {
-    return 'Scheduled: ' + away + ' @ ' + home + ' — ' +
-      formatStartTime(game.startTime);
+    return formatStartTime(game.startTime);
   }
   if (game.state === 'in-game') {
-    var clockBits = [];
-    if (game.period) clockBits.push(game.period);
-    if (game.clock) clockBits.push(game.clock);
-    var suffix = clockBits.length ? ' (' + clockBits.join(' ') + ')' : '';
-    return score + suffix;
+    var bits = [];
+    if (game.period) bits.push(game.period);
+    if (game.clock)  bits.push(game.clock);
+    return bits.length ? bits.join(' ') : 'In Progress';
   }
-  return score;
+  return '';
 }
 
-function buildTitle(game) {
+function buildName(game) {
   var away = teamLabel(game.awayTeam);
   var home = teamLabel(game.homeTeam);
   return away + ' @ ' + home;
@@ -220,15 +214,30 @@ function sportIcon() {
 }
 
 function createSportsPin(game) {
+  var awayAbbr = teamLabel(game.awayTeam);
+  var homeAbbr = teamLabel(game.homeTeam);
+  var isLiveOrFinal = game.state === 'in-game' ||
+                      game.state === 'final' ||
+                      game.state === 'postponed' ||
+                      game.state === 'canceled';
+
+  var layout = {
+    type: 'sportsPin',
+    title: buildName(game),
+    subtitle: buildSubtitle(game),
+    tinyIcon: sportIcon(),
+    largeIcon: sportIcon(),
+    homeTeam: homeAbbr,
+    awayTeam: awayAbbr,
+    homeScore: isLiveOrFinal ? String(game.homeScore) : '-',
+    awayScore: isLiveOrFinal ? String(game.awayScore) : '-',
+    lastUpdated: game.lastUpdated || new Date().toISOString()
+  };
+
   return {
     id: 'sports-' + game.gameId,
     time: game.startTime,
-    layout: {
-      type: 'genericPin',
-      title: buildTitle(game),
-      body: buildBody(game),
-      tinyIcon: sportIcon()
-    }
+    layout: layout
   };
 }
 
@@ -236,7 +245,10 @@ function createSportsPin(game) {
 
 function pushPin(game, label) {
   var pin = createSportsPin(game);
-  console.log('sports: PUT pin ' + pin.id + ' [' + label + '] ' + pin.layout.body);
+  console.log('sports: PUT pin ' + pin.id + ' [' + label + '] ' +
+    pin.layout.awayTeam + ' ' + pin.layout.awayScore + ' - ' +
+    pin.layout.homeScore + ' ' + pin.layout.homeTeam +
+    ' (' + pin.layout.subtitle + ')');
   timeline.insertUserPin(pin, function(responseText, status) {
     console.log('sports: pin ' + pin.id + ' status=' + status);
     if (status === 401 || status === 410) {
