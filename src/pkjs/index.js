@@ -231,7 +231,12 @@ function createSportsPin(game) {
     awayTeam: awayAbbr,
     homeScore: isLiveOrFinal ? String(game.homeScore) : '-',
     awayScore: isLiveOrFinal ? String(game.awayScore) : '-',
-    lastUpdated: game.lastUpdated || new Date().toISOString()
+    lastUpdated: game.lastUpdated || new Date().toISOString(),
+    headings: [awayAbbr, homeAbbr],
+    numbers: [
+      isLiveOrFinal ? String(game.awayScore) : '-',
+      isLiveOrFinal ? String(game.homeScore) : '-'
+    ]
   };
 
   return {
@@ -325,10 +330,20 @@ function tick() {
         // (a) games we tracked as in-game this session that just ended,
         // (b) recently-final games already in the snapshot when the
         //     watchapp opened (so the user still gets a pin update).
+        // Bounded by a 24h window on game.lastUpdated so a refreshed
+        // snapshot resurfacing a days-old terminal entry doesn't drop
+        // a stale pin onto the user's timeline. If lastUpdated is
+        // missing or unparseable, fall through and push (preserves
+        // prior behavior in that edge case).
         if (!pushedFinalIds[game.gameId]) {
-          pushPin(game, game.state);
-          pushedFinalIds[game.gameId] = true;
-          delete activeGameIds[game.gameId];
+          var endMs = game.lastUpdated ? new Date(game.lastUpdated).getTime() : NaN;
+          var age = isNaN(endMs) ? 0 : (Date.now() - endMs);
+          var FINAL_WINDOW_MS = 24 * 60 * 60 * 1000;
+          if (isNaN(endMs) || age <= FINAL_WINDOW_MS) {
+            pushPin(game, game.state);
+            pushedFinalIds[game.gameId] = true;
+            delete activeGameIds[game.gameId];
+          }
         }
       }
     }
