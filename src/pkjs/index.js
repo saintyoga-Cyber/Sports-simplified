@@ -220,25 +220,42 @@ function createSportsPin(game) {
                       game.state === 'final' ||
                       game.state === 'postponed' ||
                       game.state === 'canceled';
-
-  var layout = {
-    type: 'sportsPin',
-    title: buildName(game),
-    subtitle: buildSubtitle(game),
-    tinyIcon: sportIcon(),
-    largeIcon: sportIcon(),
-    homeTeam: homeAbbr,
-    awayTeam: awayAbbr,
-    homeScore: isLiveOrFinal ? String(game.homeScore) : '-',
-    awayScore: isLiveOrFinal ? String(game.awayScore) : '-',
-    lastUpdated: game.lastUpdated || new Date().toISOString(),
-    headings: [awayAbbr, homeAbbr],
-    numbers: [
-      isLiveOrFinal ? String(game.awayScore) : '-',
-      isLiveOrFinal ? String(game.homeScore) : '-'
-    ]
-  };
-
+  var layout;
+  if (isLiveOrFinal) {
+    // Full scoreboard: large score numbers with team abbrs underneath
+    layout = {
+      type: 'sportsPin',
+      title: buildName(game),
+      subtitle: buildSubtitle(game),
+      tinyIcon: sportIcon(),
+      largeIcon: sportIcon(),
+      homeTeam: homeAbbr,
+      awayTeam: awayAbbr,
+      homeScore: String(game.homeScore),
+      awayScore: String(game.awayScore),
+      lastUpdated: game.lastUpdated || new Date().toISOString(),
+      headings: [awayAbbr, homeAbbr],
+      numbers: [String(game.awayScore), String(game.homeScore)]
+    };
+  } else {
+    // Pre-game: no scores yet — use headings/numbers to show
+    // team abbreviations with '?' placeholders so the scoreboard
+    // split still renders instead of showing only the sport icon.
+    layout = {
+      type: 'sportsPin',
+      title: buildName(game),
+      subtitle: buildSubtitle(game),
+      tinyIcon: sportIcon(),
+      largeIcon: sportIcon(),
+      homeTeam: homeAbbr,
+      awayTeam: awayAbbr,
+      homeScore: '-',
+      awayScore: '-',
+      lastUpdated: game.lastUpdated || new Date().toISOString(),
+      headings: [awayAbbr, homeAbbr],
+      numbers: ['?', '?']
+    };
+  }
   return {
     id: 'sports-' + game.gameId,
     time: game.startTime,
