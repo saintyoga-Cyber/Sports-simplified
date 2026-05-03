@@ -220,6 +220,25 @@ function createSportsPin(game) {
                       game.state === 'final' ||
                       game.state === 'postponed' ||
                       game.state === 'canceled';
+  // Chalk (Round) does not render the sportsPin scoreboard split fields
+  // (rank*/score*) — body is the universal fallback that is guaranteed
+  // to render on every Pebble platform. Square hardware (Aplite/Basalt)
+  // still gets the dedicated scoreboard via the rank*/score* fields
+  // below; body just adds a readable line for Round.
+  var body;
+  if (isLiveOrFinal && game.state !== 'postponed' && game.state !== 'canceled') {
+    body = awayAbbr + ' ' + String(game.awayScore) +
+           '  —  ' +
+           String(game.homeScore) + ' ' + homeAbbr;
+  } else if (game.state === 'postponed') {
+    body = awayAbbr + ' @ ' + homeAbbr + '\nPostponed';
+  } else if (game.state === 'canceled') {
+    body = awayAbbr + ' @ ' + homeAbbr + '\nCanceled';
+  } else {
+    // pre-game
+    body = awayAbbr + ' @ ' + homeAbbr +
+           '\n' + formatStartTime(game.startTime);
+  }
   var layout = {
     type: 'sportsPin',
     title: buildName(game),
@@ -227,6 +246,7 @@ function createSportsPin(game) {
     tinyIcon: sportIcon(),
     largeIcon: sportIcon(),
     lastUpdated: game.lastUpdated || new Date().toISOString(),
+    body: body,
     // Correct field names per Pebble SDK pin-structure spec:
     nameAway: awayAbbr,
     nameHome: homeAbbr,
