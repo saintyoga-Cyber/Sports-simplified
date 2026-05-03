@@ -159,7 +159,11 @@ function fetchSnapshot(cb) {
 
 function teamLabel(team) {
   if (!team) return '';
-  return team.abbreviation || team.shortDisplayName || team.displayName || '';
+  // SDK spec hard-caps nameAway/nameHome at 4 characters; enforce here
+  // so the fallback chain (abbreviation -> shortDisplayName -> displayName)
+  // can never silently break the scoreboard renderer.
+  var label = team.abbreviation || team.shortDisplayName || team.displayName || '';
+  return label.substring(0, 4);
 }
 
 // Format an ISO 8601 start time as "MM/DD HH:MM" in the phone's local
@@ -216,29 +220,23 @@ function sportIcon() {
 function createSportsPin(game) {
   var awayAbbr = teamLabel(game.awayTeam);
   var homeAbbr = teamLabel(game.homeTeam);
-  var isLiveOrFinal = game.state === 'in-game' ||
-                      game.state === 'final' ||
-                      game.state === 'postponed' ||
-                      game.state === 'canceled';
-  // Chalk (Round) does not render the sportsPin scoreboard split fields
-  // (rank*/score*) — body is the universal fallback that is guaranteed
-  // to render on every Pebble platform. Square hardware (Aplite/Basalt)
-  // still gets the dedicated scoreboard via the rank*/score* fields
-  // below; body just adds a readable line for Round.
-  var body;
-  if (isLiveOrFinal && game.state !== 'postponed' && game.state !== 'canceled') {
-    body = awayAbbr + ' ' + String(game.awayScore) +
-           '  —  ' +
-           String(game.homeScore) + ' ' + homeAbbr;
-  } else if (game.state === 'postponed') {
-    body = awayAbbr + ' @ ' + homeAbbr + '\nPostponed';
-  } else if (game.state === 'canceled') {
-    body = awayAbbr + ' @ ' + homeAbbr + '\nCanceled';
-  } else {
-    // pre-game
-    body = awayAbbr + ' @ ' + homeAbbr +
-           '\n' + formatStartTime(game.startTime);
-  }
+  // Only in-game and final states have an actual played score that
+  // belongs in the scoreboard. postponed/canceled are treated as
+  // pre-game (no score was played) per SDK semantics.
+  var isScoreState = game.state === 'in-game' ||
+                     game.state === 'final';
+  // rankAway/rankHome must be ~2 chars (seeding/standings rank, e.g.
+  // "3", "08"). When the API doesn't provide a rank, ship an empty
+  // string — never the abbreviation, which corrupts the pre-game
+  // scoreboard column and forces the firmware to fall back to body.
+  var rankAway = game.awayTeam && game.awayTeam.rank
+                   ? String(game.awayTeam.rank).substring(0, 2) : '';
+  var rankHome = game.homeTeam && game.homeTeam.rank
+                   ? String(game.homeTeam.rank).substring(0, 2) : '';
+  var recordAway = game.awayTeam && game.awayTeam.record
+                     ? game.awayTeam.record : '';
+  var recordHome = game.homeTeam && game.homeTeam.record
+                     ? game.homeTeam.record : '';
   var layout = {
     type: 'sportsPin',
     title: buildName(game),
@@ -246,17 +244,19 @@ function createSportsPin(game) {
     tinyIcon: sportIcon(),
     largeIcon: sportIcon(),
     lastUpdated: game.lastUpdated || new Date().toISOString(),
-    body: body,
-    // Correct field names per Pebble SDK pin-structure spec:
-    nameAway: awayAbbr,
-    nameHome: homeAbbr,
-    // rankAway/rankHome are shown BEFORE the game starts (pre-game)
-    // scoreAway/scoreHome are shown DURING and AFTER the game
-    rankAway: awayAbbr,
-    rankHome: homeAbbr,
-    scoreAway: isLiveOrFinal ? String(game.awayScore) : '-',
-    scoreHome: isLiveOrFinal ? String(game.homeScore) : '-',
-    sportsGameState: isLiveOrFinal ? 'in-game' : 'pre-game'
+    // SDK pin-structure fields. With these populated correctly the
+    // firmware renders the dedicated scoreboard layout natively on
+    // every platform including Chalk (PTR), so no `body` fallback is
+    // needed — including one was actually suppressing the scoreboard.
+    nameAway: awayAbbr,                                       // max 4 chars
+    nameHome: homeAbbr,                                       // max 4 chars
+    rankAway: rankAway,                                       // ~2 chars, shown PRE-GAME
+    rankHome: rankHome,                                       // ~2 chars, shown PRE-GAME
+    recordAway: recordAway,                                   // e.g. "12-5-2"
+    recordHome: recordHome,
+    scoreAway: isScoreState ? String(game.awayScore) : '',    // shown IN-GAME + FINAL only
+    scoreHome: isScoreState ? String(game.homeScore) : '',
+    sportsGameState: isScoreState ? 'in-game' : 'pre-game'    // pre-game for postponed/canceled
   };
   return {
     id: 'sports-' + game.gameId,
