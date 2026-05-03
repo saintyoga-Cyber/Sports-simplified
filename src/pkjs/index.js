@@ -220,42 +220,24 @@ function createSportsPin(game) {
                       game.state === 'final' ||
                       game.state === 'postponed' ||
                       game.state === 'canceled';
-  var layout;
-  if (isLiveOrFinal) {
-    // Full scoreboard: large score numbers with team abbrs underneath
-    layout = {
-      type: 'sportsPin',
-      title: buildName(game),
-      subtitle: buildSubtitle(game),
-      tinyIcon: sportIcon(),
-      largeIcon: sportIcon(),
-      homeTeam: homeAbbr,
-      awayTeam: awayAbbr,
-      homeScore: String(game.homeScore),
-      awayScore: String(game.awayScore),
-      lastUpdated: game.lastUpdated || new Date().toISOString(),
-      headings: [awayAbbr, homeAbbr],
-      numbers: [String(game.awayScore), String(game.homeScore)]
-    };
-  } else {
-    // Pre-game: no scores yet — use headings/numbers to show
-    // team abbreviations with '?' placeholders so the scoreboard
-    // split still renders instead of showing only the sport icon.
-    layout = {
-      type: 'sportsPin',
-      title: buildName(game),
-      subtitle: buildSubtitle(game),
-      tinyIcon: sportIcon(),
-      largeIcon: sportIcon(),
-      homeTeam: homeAbbr,
-      awayTeam: awayAbbr,
-      homeScore: '-',
-      awayScore: '-',
-      lastUpdated: game.lastUpdated || new Date().toISOString(),
-      headings: [awayAbbr, homeAbbr],
-      numbers: ['?', '?']
-    };
-  }
+  var layout = {
+    type: 'sportsPin',
+    title: buildName(game),
+    subtitle: buildSubtitle(game),
+    tinyIcon: sportIcon(),
+    largeIcon: sportIcon(),
+    lastUpdated: game.lastUpdated || new Date().toISOString(),
+    // Correct field names per Pebble SDK pin-structure spec:
+    nameAway: awayAbbr,
+    nameHome: homeAbbr,
+    // rankAway/rankHome are shown BEFORE the game starts (pre-game)
+    // scoreAway/scoreHome are shown DURING and AFTER the game
+    rankAway: awayAbbr,
+    rankHome: homeAbbr,
+    scoreAway: isLiveOrFinal ? String(game.awayScore) : '-',
+    scoreHome: isLiveOrFinal ? String(game.homeScore) : '-',
+    sportsGameState: isLiveOrFinal ? 'in-game' : 'pre-game'
+  };
   return {
     id: 'sports-' + game.gameId,
     time: game.startTime,
@@ -268,8 +250,8 @@ function createSportsPin(game) {
 function pushPin(game, label) {
   var pin = createSportsPin(game);
   console.log('sports: PUT pin ' + pin.id + ' [' + label + '] ' +
-    pin.layout.awayTeam + ' ' + pin.layout.awayScore + ' - ' +
-    pin.layout.homeScore + ' ' + pin.layout.homeTeam +
+    pin.layout.nameAway + ' ' + pin.layout.scoreAway + ' - ' +
+    pin.layout.scoreHome + ' ' + pin.layout.nameHome +
     ' (' + pin.layout.subtitle + ')');
   timeline.insertUserPin(pin, function(responseText, status) {
     console.log('sports: pin ' + pin.id + ' status=' + status);
