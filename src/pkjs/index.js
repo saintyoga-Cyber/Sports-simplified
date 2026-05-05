@@ -176,10 +176,49 @@ var NHL_TEAM_COLORS = {
   VAN: 'blue', VGK: 'yellow', WPG: 'blue', WSH: 'red'
 };
 
+var NBA_TEAM_COLORS = {
+  ATL: 'red', BOS: 'darkGreen', BKN: 'darkGray', CHA: 'purple', CHI: 'red',
+  CLE: 'darkCandyAppleRed', DAL: 'blue', DEN: 'darkBlue', DET: 'red',
+  GSW: 'blue', GS: 'blue', HOU: 'red', IND: 'darkBlue', LAC: 'red',
+  LAL: 'purple', MEM: 'darkBlue', MIA: 'red', MIL: 'darkGreen',
+  MIN: 'darkBlue', NOP: 'darkBlue', NO: 'darkBlue', NYK: 'blue', NY: 'blue',
+  OKC: 'blue', ORL: 'blue', PHI: 'blue', PHX: 'purple', PHO: 'purple',
+  POR: 'red', SAC: 'purple', SAS: 'darkGray', SA: 'darkGray', TOR: 'red',
+  UTAH: 'darkGreen', UTA: 'darkGreen', WSH: 'blue', WAS: 'blue'
+};
+
+var MLB_TEAM_COLORS = {
+  ARI: 'darkCandyAppleRed', ATL: 'red', BAL: 'orange', BOS: 'red',
+  CHC: 'blue', CHW: 'darkGray', CWS: 'darkGray', CIN: 'red', CLE: 'red',
+  COL: 'purple', DET: 'darkBlue', HOU: 'orange', KC: 'blue', KAN: 'blue',
+  LAA: 'red', LAD: 'blue', MIA: 'blue', MIL: 'darkBlue', MIN: 'darkBlue',
+  NYM: 'blue', NYY: 'darkBlue', OAK: 'darkGreen', PHI: 'red', PIT: 'yellow',
+  SD: 'yellow', SDP: 'yellow', SF: 'orange', SFG: 'orange', SEA: 'darkGreen',
+  STL: 'red', TB: 'darkBlue', TBR: 'darkBlue', TEX: 'blue', TOR: 'blue',
+  WSH: 'red', WAS: 'red'
+};
+
+var NFL_TEAM_COLORS = {
+  ARI: 'red', ATL: 'red', BAL: 'purple', BUF: 'blue', CAR: 'blue',
+  CHI: 'darkBlue', CIN: 'orange', CLE: 'orange', DAL: 'blue', DEN: 'orange',
+  DET: 'blue', GB: 'darkGreen', HOU: 'darkBlue', IND: 'blue', JAX: 'darkBlue',
+  KC: 'red', LAC: 'blue', LAR: 'blue', LV: 'darkGray', OAK: 'darkGray',
+  MIA: 'blue', MIN: 'purple', NE: 'darkBlue', NO: 'yellow', NYG: 'blue',
+  NYJ: 'darkGreen', PHI: 'darkGreen', PIT: 'yellow', SEA: 'darkBlue',
+  SF: 'red', TB: 'red', TEN: 'darkBlue', WSH: 'darkCandyAppleRed',
+  WAS: 'darkCandyAppleRed'
+};
+
 function teamColor(team) {
   if (!team) return 'white';
+  var sport = getSavedSport();
+  var map;
+  if (sport === 'nba') map = NBA_TEAM_COLORS;
+  else if (sport === 'mlb') map = MLB_TEAM_COLORS;
+  else if (sport === 'nfl') map = NFL_TEAM_COLORS;
+  else map = NHL_TEAM_COLORS;
   var abbr = (team.abbreviation || '').toUpperCase();
-  return NHL_TEAM_COLORS[abbr] || 'white';
+  return map[abbr] || 'white';
 }
 
 function createSportsPin(game) {
