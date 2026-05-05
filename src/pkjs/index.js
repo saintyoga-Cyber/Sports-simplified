@@ -129,6 +129,16 @@ function buildSubtitle(game) {
   if (game.state === 'postponed') return 'Postponed';
   if (game.state === 'canceled')  return 'Canceled';
   if (game.state === 'pre-game' || game.state === 'scheduled') {
+    var startMs = new Date(game.startTime).getTime();
+    var diffMs = startMs - Date.now();
+    if (!isNaN(diffMs) && diffMs > 0) {
+      var totalMin = Math.round(diffMs / 60000);
+      var hh = Math.floor(totalMin / 60);
+      var mm = totalMin % 60;
+      if (hh > 0) return mm > 0 ? 'Starts in ' + hh + 'h ' + mm + 'm'
+                                : 'Starts in ' + hh + 'h';
+      return 'Starts in ' + mm + 'm';
+    }
     return formatStartTime(game.startTime);
   }
   if (game.state === 'in-game') {
@@ -156,6 +166,22 @@ function sportIcon() {
   return 'system://images/SCHEDULED_EVENT';
 }
 
+var NHL_TEAM_COLORS = {
+  ANA: 'orange', ARI: 'darkCandyAppleRed', BOS: 'yellow', BUF: 'blue',
+  CAR: 'red', CBJ: 'blue', CGY: 'red', CHI: 'red', COL: 'darkCandyAppleRed',
+  DAL: 'darkGreen', DET: 'red', EDM: 'orange', FLA: 'red', LAK: 'darkGray',
+  MIN: 'darkGreen', MTL: 'red', NJD: 'red', NSH: 'yellow', NYI: 'blue',
+  NYR: 'blue', OTT: 'red', PHI: 'orange', PIT: 'yellow', SEA: 'darkBlue',
+  SJS: 'darkBlue', STL: 'blue', TBL: 'blue', TOR: 'blue', UTA: 'darkBlue',
+  VAN: 'blue', VGK: 'yellow', WPG: 'blue', WSH: 'red'
+};
+
+function teamColor(team) {
+  if (!team) return 'white';
+  var abbr = (team.abbreviation || '').toUpperCase();
+  return NHL_TEAM_COLORS[abbr] || 'white';
+}
+
 function createSportsPin(game) {
   var awayAbbr = teamLabel(game.awayTeam);
   var homeAbbr = teamLabel(game.homeTeam);
@@ -169,13 +195,46 @@ function createSportsPin(game) {
                      ? game.awayTeam.record : '';
   var recordHome = game.homeTeam && game.homeTeam.record
                      ? game.homeTeam.record : '';
+  var subtitle = buildSubtitle(game);
+  var matchup = awayAbbr + ' @ ' + homeAbbr;
+
+  // Title and body are the only fields the Core Devices phone app forwards
+  // to the watch today, so they carry all visible info. Keep sports-* fields
+  // populated for forward compat.
+  var title;
+  var bodyLines;
+  if (isScoreState) {
+    title = awayAbbr + ' ' + game.awayScore + ' \u2014 ' +
+            homeAbbr + ' ' + game.homeScore;
+    bodyLines = [matchup];
+    if (game.period || game.clock) {
+      bodyLines.push([game.period, game.clock].filter(Boolean).join(' '));
+    }
+  } else {
+    title = matchup;
+    bodyLines = [];
+    if (recordAway || recordHome) {
+      bodyLines.push(awayAbbr + ' ' + recordAway + ' \u00b7 ' +
+                     homeAbbr + ' ' + recordHome);
+    }
+  }
+  var body = bodyLines.join('\n') || subtitle;
+  var paragraphs = isScoreState
+    ? [String(game.awayScore), String(game.homeScore)]
+    : [recordAway || '\u2014', recordHome || '\u2014'];
+
   var layout = {
     type: 'sportsPin',
-    title: buildName(game),
-    subtitle: buildSubtitle(game),
+    title: title,
+    subtitle: subtitle,
+    body: body,
     tinyIcon: sportIcon(),
     largeIcon: sportIcon(),
     lastUpdated: game.lastUpdated || new Date().toISOString(),
+    primaryColor: teamColor(game.homeTeam),
+    backgroundColor: teamColor(game.awayTeam),
+    headings: [awayAbbr, homeAbbr],
+    paragraphs: paragraphs,
     nameAway: awayAbbr,
     nameHome: homeAbbr,
     rankAway: rankAway,
@@ -195,8 +254,8 @@ function createSportsPin(game) {
     pin.updateNotification = {
       layout: {
         type: 'genericNotification',
-        title: buildName(game),
-        body: buildSubtitle(game),
+        title: title,
+        body: subtitle,
         tinyIcon: sportIcon()
       }
     };
