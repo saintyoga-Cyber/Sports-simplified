@@ -1,6 +1,6 @@
 var timeline = require('./timeline');
 
-var COMPANION_URL = 'https://pebble-sports-worker.YOURSUBDOMAIN.workers.dev';
+var COMPANION_URL = 'https://pebble-sports-worker.saintyoga.workers.dev';
 var POLL_INTERVAL_MS = 2 * 60 * 1000;
 
 var LS_FOLLOWED = 'sports_followed';
@@ -237,9 +237,6 @@ function createSportsPin(game) {
   var subtitle = buildSubtitle(game);
   var matchup = awayAbbr + ' @ ' + homeAbbr;
 
-  // Title and body are the only fields the Core Devices phone app forwards
-  // to the watch today, so they carry all visible info. Keep sports-* fields
-  // populated for forward compat.
   var title;
   var bodyLines;
   if (isScoreState) {
