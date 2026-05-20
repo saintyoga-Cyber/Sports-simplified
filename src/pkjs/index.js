@@ -2,6 +2,14 @@ var timeline = require('./timeline');
 
 var COMPANION_URL = 'https://pebble-sports-worker.saintyoga.workers.dev';
 var POLL_INTERVAL_MS = 2 * 60 * 1000;
+// Duration (minutes) added to every pin so PebbleOS keeps the pin in
+// the "future/upcoming" timeline view for the full likely game window.
+// 180 min = 3 hours, which safely covers any sport.
+var PIN_DURATION_MIN = 180;
+// When no live games are found, poll at a slower cadence instead of
+// stopping completely so the companion picks up games that start later
+// without the user needing to open the app.
+var IDLE_POLL_INTERVAL_MS = 5 * 60 * 1000;
 
 var LS_FOLLOWED = 'sports_followed';
 var LS_ACTIVE_SPORT = 'sports_active_sport';
@@ -281,11 +289,22 @@ function createSportsPin(game) {
     scoreHome: isScoreState ? String(game.homeScore) : '',
     sportsGameState: isScoreState ? 'in-game' : 'pre-game'
   };
+
+  // Change 1 & 2: duration keeps the pin in the future timeline for the
+  // full game window. Without it, PebbleOS moves the pin to the past the
+  // instant startTime passes, even while the game is still in progress.
   var pin = {
     id: 'sports-' + game.gameId + (isScoreState ? '-live' : '-pre'),
     time: game.startTime,
-    layout: layout
+    duration: PIN_DURATION_MIN,
+    layout: layout,
+    // Change 3: openWatchApp action lets the user tap the timeline pin to
+    // launch Sports Simplified directly from the Pebble timeline.
+    actions: [
+      { type: 'openWatchApp', title: 'Open Sports App', launchCode: 1 }
+    ]
   };
+
   if (isScoreState) {
     pin.updateNotification = {
       layout: {
@@ -301,9 +320,10 @@ function createSportsPin(game) {
 
 function pushPin(game, label) {
   var pin = createSportsPin(game);
-  if (game.state === 'in-game' || game.state === 'final') {
-    timeline.deleteUserPin({id: 'sports-' + game.gameId + '-pre'}, function() {});
-  }
+  // Change 4: do NOT delete the -pre pin when a game goes live/final.
+  // Deleting it causes a brief gap where the pin disappears from the
+  // timeline. The -live pin is pushed at the same startTime+duration so
+  // PebbleOS updates in-place with no visible gap.
   console.log('sports: PUT pin ' + pin.id + ' [' + label + '] ' +
     pin.layout.nameAway + ' ' + pin.layout.scoreAway + ' - ' +
     pin.layout.scoreHome + ' ' + pin.layout.nameHome +
@@ -333,7 +353,7 @@ function tick() {
     }
     if (err) {
       console.log('sports: fetch failed: ' + err.message);
-      scheduleNext(true);
+      scheduleNext(true, POLL_INTERVAL_MS);
       return;
     }
 
@@ -376,27 +396,32 @@ function tick() {
     }
 
     if (stillLive) {
-      scheduleNext(false);
+      scheduleNext(false, POLL_INTERVAL_MS);
     } else {
-      console.log('sports: no live games — notifying C, awaiting next wakeup');
-      sendPollResult(0, function(err) {
+      // Change 5: idle poll at 5-minute cadence instead of stopping
+      // completely, so the companion picks up games that start later
+      // without the user needing to open the watch app first.
+      console.log('sports: no live games — entering idle poll (' +
+        (IDLE_POLL_INTERVAL_MS / 60000) + ' min)');
+      sendPollResult(0, function(sendErr) {
         if (!isPollingActive) return;
-        if (err) {
-          console.log('sports: SPORTS_POLL_RESULT failed — retrying on next tick');
-          scheduleNext(true);
+        if (sendErr) {
+          console.log('sports: SPORTS_POLL_RESULT failed — retrying');
+          scheduleNext(true, IDLE_POLL_INTERVAL_MS);
         } else {
-          stopPolling();
+          scheduleNext(false, IDLE_POLL_INTERVAL_MS);
         }
       });
     }
   });
 }
 
-function scheduleNext(isRetry) {
+function scheduleNext(isRetry, delayMs) {
   if (!isPollingActive) return;
   if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
-  pollTimer = setTimeout(tick, POLL_INTERVAL_MS);
-  if (isRetry) console.log('sports: retrying in ' + (POLL_INTERVAL_MS / 1000) + 's');
+  var delay = delayMs || POLL_INTERVAL_MS;
+  pollTimer = setTimeout(tick, delay);
+  if (isRetry) console.log('sports: retrying in ' + (delay / 1000) + 's');
 }
 
 function startPolling() {
