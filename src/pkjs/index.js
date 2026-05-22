@@ -25,7 +25,7 @@ function getSavedFollowed() {
         return parsed;
       }
       try { localStorage.removeItem(LS_FOLLOWED); } catch (eClear) {}
-      console.log('sports: LS_FOLLOWED corrupted \u2014 discarded');
+      console.log('sports: LS_FOLLOWED corrupted — discarded');
     }
     var oldSport = localStorage.getItem(LS_SPORT_LEGACY);
     var oldTeamsRaw = localStorage.getItem(LS_TEAMS_LEGACY);
@@ -46,7 +46,7 @@ function getSavedFollowed() {
         try { localStorage.setItem(LS_ACTIVE_SPORT, oldSport); } catch (e2) {}
         console.log('sports: migrated legacy settings to multi-sport followed map');
       } else {
-        console.log('sports: legacy settings malformed \u2014 discarded');
+        console.log('sports: legacy settings malformed — discarded');
       }
       clearLegacyKeys();
       return migrated;
@@ -246,7 +246,7 @@ function createSportsPin(game) {
   var title;
   var bodyLines;
   if (isScoreState) {
-    title = awayAbbr + ' ' + game.awayScore + ' \u2014 ' +
+    title = awayAbbr + ' ' + game.awayScore + ' — ' +
             homeAbbr + ' ' + game.homeScore;
     bodyLines = [matchup];
     if (game.period || game.clock) {
@@ -256,14 +256,14 @@ function createSportsPin(game) {
     title = matchup;
     bodyLines = [];
     if (recordAway || recordHome) {
-      bodyLines.push(awayAbbr + ' ' + recordAway + ' \u00b7 ' +
+      bodyLines.push(awayAbbr + ' ' + recordAway + ' · ' +
                      homeAbbr + ' ' + recordHome);
     }
   }
   var body = bodyLines.join('\n') || subtitle;
   var paragraphs = isScoreState
     ? [String(game.awayScore), String(game.homeScore)]
-    : [recordAway || '\u2014', recordHome || '\u2014'];
+    : [recordAway || '—', recordHome || '—'];
 
   var layout = {
     type: 'sportsPin',
@@ -313,6 +313,13 @@ function createSportsPin(game) {
 
 function pushPin(game, label) {
   var pin = createSportsPin(game);
+  // Delete the stale -pre pin before pushing -live/final/terminal.
+  // -pre and -live are different pin IDs; without this delete the
+  // pre-game pin stays frozen on the timeline forever.
+  if (game.state === 'in-game' || game.state === 'final' ||
+      game.state === 'postponed' || game.state === 'canceled') {
+    timeline.deleteUserPin({id: 'sports-' + game.gameId + '-pre'}, function() {});
+  }
   console.log('sports: PUT pin ' + pin.id + ' [' + label + '] ' +
     pin.layout.nameAway + ' ' + pin.layout.scoreAway + ' - ' +
     pin.layout.scoreHome + ' ' + pin.layout.nameHome +
@@ -341,12 +348,12 @@ function tick() {
   var firstTick = isFirstTick;
   if (firstTick) {
     isFirstTick = false;
-    console.log('sports: first tick \u2014 will re-push all upcoming pins to overwrite stale timeline entries');
+    console.log('sports: first tick — will re-push all upcoming pins to overwrite stale timeline entries');
   }
 
   fetchSnapshot(function(err, games) {
     if (!isPollingActive) {
-      console.log('sports: snapshot returned after stop \u2014 discarding');
+      console.log('sports: snapshot returned after stop — discarding');
       return;
     }
     if (err) {
@@ -399,12 +406,12 @@ function tick() {
     if (stillLive) {
       scheduleNext(false, POLL_INTERVAL_MS);
     } else {
-      console.log('sports: no live games \u2014 entering idle poll (' +
+      console.log('sports: no live games — entering idle poll (' +
         (IDLE_POLL_INTERVAL_MS / 60000) + ' min)');
       sendPollResult(0, function(sendErr) {
         if (!isPollingActive) return;
         if (sendErr) {
-          console.log('sports: SPORTS_POLL_RESULT failed \u2014 retrying');
+          console.log('sports: SPORTS_POLL_RESULT failed — retrying');
           scheduleNext(true, IDLE_POLL_INTERVAL_MS);
         } else {
           scheduleNext(false, IDLE_POLL_INTERVAL_MS);
@@ -484,7 +491,7 @@ function registerWithServer() {
     try { accountToken = Pebble.getWatchToken(); } catch (e2) {}
   }
   if (!accountToken) {
-    console.log('sports: no account/watch token \u2014 cannot register');
+    console.log('sports: no account/watch token — cannot register');
     return;
   }
 
@@ -522,11 +529,11 @@ Pebble.addEventListener('ready', function() {
 Pebble.addEventListener('appmessage', function(e) {
   var payload = e && e.payload;
   if (readKey(payload, 'SPORTS_APP_OPEN') !== undefined) {
-    console.log('sports: appmessage SPORTS_APP_OPEN \u2014 starting poll loop');
+    console.log('sports: appmessage SPORTS_APP_OPEN — starting poll loop');
     startPolling();
   }
   if (readKey(payload, 'SPORTS_APP_EXIT') !== undefined) {
-    console.log('sports: appmessage SPORTS_APP_EXIT \u2014 stopping poll loop');
+    console.log('sports: appmessage SPORTS_APP_EXIT — stopping poll loop');
     stopPolling();
   }
 });
@@ -552,11 +559,11 @@ Pebble.addEventListener('webviewclosed', function(e) {
   var sport = settings && settings.SPORT;
   var teams = settings && settings.TEAMS;
   if (!sport || typeof sport !== 'string' || sport.length === 0) {
-    console.log('sports: webviewclosed missing SPORT \u2014 ignoring payload');
+    console.log('sports: webviewclosed missing SPORT — ignoring payload');
     return;
   }
   if (!Array.isArray(teams)) {
-    console.log('sports: webviewclosed missing TEAMS array \u2014 ignoring payload');
+    console.log('sports: webviewclosed missing TEAMS array — ignoring payload');
     return;
   }
   var followed = getSavedFollowed();

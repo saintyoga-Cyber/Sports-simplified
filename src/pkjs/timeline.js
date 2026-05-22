@@ -43,7 +43,9 @@ function timelineRequest(pin, type, callback) {
   Pebble.getTimelineToken(function(token) {
     console.log('timeline: token acquired: ' + token.substring(0, 10) + '...');
     xhr.setRequestHeader('X-User-Token', '' + token);
-    xhr.send(JSON.stringify(pin));
+    // DELETE requests must not send a body — Rebble timeline API ignores
+    // or rejects bodies on DELETE, which caused silent delete failures.
+    xhr.send(type === 'DELETE' ? null : JSON.stringify(pin));
     console.log('timeline: request sent');
   }, function(error) {
     console.log('timeline: ERROR getting token: ' + error);
