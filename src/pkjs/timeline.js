@@ -7,6 +7,12 @@
 
 var TIMELINE_API_URL = 'https://timeline-api.rebble.io/';
 
+// --- DEBUG MODE ---
+// Set to true to receive an on-watch notification showing Rebble's
+// HTTP response for every pin push. Flip back to false for normal
+// operation once diagnostics are complete.
+var DEBUG_PIN_PUSH = false;
+
 /**
  * Send a request to the timeline API.
  * @param pin The JSON pin to insert. Must contain 'id' field.
@@ -59,7 +65,24 @@ function timelineRequest(pin, type, callback) {
  * @param callback The callback to receive the responseText after the request has completed.
  */
 function insertUserPin(pin, callback) {
-  timelineRequest(pin, 'PUT', callback);
+  timelineRequest(pin, 'PUT', function(responseText, status) {
+    if (DEBUG_PIN_PUSH) {
+      var debugPin = {
+        id: 'debug-pin-status-' + pin.id,
+        time: new Date().toISOString(),
+        layout: {
+          type: 'genericNotification',
+          title: 'Pin Debug: ' + (status === 200 ? 'OK' : 'FAIL ' + status),
+          tinyIcon: status === 200
+            ? 'system://images/RESULT_SENT'
+            : 'system://images/RESULT_FAILED',
+          body: pin.id + ' | HTTP ' + status + ' | ' + responseText.substring(0, 100)
+        }
+      };
+      timelineRequest(debugPin, 'PUT', function() {});
+    }
+    callback(responseText, status);
+  });
 }
 
 /**
