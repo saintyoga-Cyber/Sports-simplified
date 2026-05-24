@@ -95,6 +95,12 @@ function buildSnapshotQuery() {
 }
 
 function fetchSnapshot(cb) {
+  var sport = getSavedSport();
+  if (!sport) {
+    console.log('sports: no sport configured — skipping fetch');
+    cb(null, []);
+    return;
+  }
   var xhr = new XMLHttpRequest();
   xhr.open('GET', COMPANION_URL + '/api/sports/games' + buildSnapshotQuery(), true);
   xhr.timeout = 10000;
@@ -441,13 +447,13 @@ function startPolling() {
 }
 
 function stopPolling() {
-  if (!isPollingActive && !pollTimer) return;
-  console.log('sports: stopping poll loop');
-  isPollingActive = false;
-  if (pollTimer) {
-    clearTimeout(pollTimer);
-    pollTimer = null;
-  }
+  // App closed — don't kill the loop entirely. Drop to idle rate so pins
+  // keep updating in the background without hammering the server.
+  if (!isPollingActive) return;
+  console.log('sports: app closed — switching to idle poll rate (' +
+    (IDLE_POLL_INTERVAL_MS / 60000) + ' min)');
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  pollTimer = setTimeout(tick, IDLE_POLL_INTERVAL_MS);
 }
 
 function readKey(payload, name) {
@@ -533,7 +539,7 @@ Pebble.addEventListener('appmessage', function(e) {
     startPolling();
   }
   if (readKey(payload, 'SPORTS_APP_EXIT') !== undefined) {
-    console.log('sports: appmessage SPORTS_APP_EXIT — stopping poll loop');
+    console.log('sports: appmessage SPORTS_APP_EXIT — dropping to idle poll rate');
     stopPolling();
   }
 });
