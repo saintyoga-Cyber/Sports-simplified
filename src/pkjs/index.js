@@ -75,7 +75,12 @@ function getSavedTeamIds() {
 }
 
 var pollTimer = null;
-var isPollingActive = false;
+// isLoopRunning: true whenever the background timer chain is active.
+// Never set to false at app close — background polling must continue.
+var isLoopRunning = false;
+// isAppOpen: true only while the watch app UI is visible.
+// Used by startPolling() to decide whether to fire an immediate tick.
+var isAppOpen = false;
 var activeGameIds = {};
 var pushedFinalIds = {};
 var pushedScheduledIds = {};
@@ -344,8 +349,8 @@ function pushPin(game, label) {
 }
 
 function tick() {
-  if (!isPollingActive) {
-    console.log('sports: tick aborted (polling inactive)');
+  if (!isLoopRunning) {
+    console.log('sports: tick aborted (loop not running)');
     return;
   }
 
@@ -358,7 +363,7 @@ function tick() {
   }
 
   fetchSnapshot(function(err, games) {
-    if (!isPollingActive) {
+    if (!isLoopRunning) {
       console.log('sports: snapshot returned after stop — discarding');
       return;
     }
@@ -415,7 +420,7 @@ function tick() {
       console.log('sports: no live games — entering idle poll (' +
         (IDLE_POLL_INTERVAL_MS / 60000) + ' min)');
       sendPollResult(0, function(sendErr) {
-        if (!isPollingActive) return;
+        if (!isLoopRunning) return;
         if (sendErr) {
           console.log('sports: SPORTS_POLL_RESULT failed — retrying');
           scheduleNext(true, IDLE_POLL_INTERVAL_MS);
@@ -428,7 +433,7 @@ function tick() {
 }
 
 function scheduleNext(isRetry, delayMs) {
-  if (!isPollingActive) return;
+  if (!isLoopRunning) return;
   if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
   var delay = delayMs || POLL_INTERVAL_MS;
   pollTimer = setTimeout(tick, delay);
@@ -436,24 +441,32 @@ function scheduleNext(isRetry, delayMs) {
 }
 
 function startPolling() {
-  if (isPollingActive) return;
+  isAppOpen = true;
+  if (isLoopRunning) {
+    // Loop already running in background — cancel the pending idle timer
+    // and fire tick() immediately so app-open always gets a fresh fetch.
+    console.log('sports: app open — cancelling idle timer, firing immediate tick');
+    if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+    tick();
+    return;
+  }
+  // First start: full initialisation.
   console.log('sports: starting poll loop');
   activeGameIds = {};
   pushedFinalIds = {};
   pushedScheduledIds = {};
   isFirstTick = true;
-  isPollingActive = true;
+  isLoopRunning = true;
   tick();
 }
 
 function stopPolling() {
-  // App closed — set isPollingActive to false so a subsequent startPolling()
-  // call (triggered by SPORTS_APP_OPEN) fires an immediate tick rather than
-  // being a no-op. Schedule an idle-rate tick for background updates.
-  if (!isPollingActive) return;
+  // App closed — mark app as closed and drop to idle rate.
+  // isLoopRunning stays true so background ticks keep firing.
+  if (!isLoopRunning) return;
+  isAppOpen = false;
   console.log('sports: app closed — switching to idle poll rate (' +
     (IDLE_POLL_INTERVAL_MS / 60000) + ' min)');
-  isPollingActive = false;
   if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
   pollTimer = setTimeout(tick, IDLE_POLL_INTERVAL_MS);
 }
