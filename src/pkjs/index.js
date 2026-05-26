@@ -447,11 +447,13 @@ function startPolling() {
 }
 
 function stopPolling() {
-  // App closed — don't kill the loop entirely. Drop to idle rate so pins
-  // keep updating in the background without hammering the server.
+  // App closed — set isPollingActive to false so a subsequent startPolling()
+  // call (triggered by SPORTS_APP_OPEN) fires an immediate tick rather than
+  // being a no-op. Schedule an idle-rate tick for background updates.
   if (!isPollingActive) return;
   console.log('sports: app closed — switching to idle poll rate (' +
     (IDLE_POLL_INTERVAL_MS / 60000) + ' min)');
+  isPollingActive = false;
   if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
   pollTimer = setTimeout(tick, IDLE_POLL_INTERVAL_MS);
 }
