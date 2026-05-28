@@ -3,7 +3,6 @@ var timeline = require('./timeline');
 var COMPANION_URL = 'https://pebble-sports-worker.saintyoga.workers.dev';
 var POLL_INTERVAL_MS = 2 * 60 * 1000;
 var PIN_DURATION_MIN = 180;
-var IDLE_POLL_INTERVAL_MS = 5 * 60 * 1000;
 
 var LS_FOLLOWED = 'sports_followed';
 var LS_ACTIVE_SPORT = 'sports_active_sport';
@@ -75,20 +74,11 @@ function getSavedTeamIds() {
 }
 
 var pollTimer = null;
-// isLoopRunning: true whenever the background timer chain is active.
-// Never set to false at app close — background polling must continue.
-var isLoopRunning = false;
-// isAppOpen: true only while the watch app UI is visible.
-// Used by startPolling() to decide whether to fire an immediate tick.
-var isAppOpen = false;
+var isPollingActive = false;
 var activeGameIds = {};
 var pushedFinalIds = {};
 var pushedScheduledIds = {};
 var SCHEDULED_WINDOW_MS = 48 * 60 * 60 * 1000;
-// On the very first tick after startup, skip the pushedScheduledIds guard
-// so all upcoming pins are unconditionally re-pushed. This overwrites any
-// stale pins (e.g. from a previous build that lacked openWatchApp actions).
-var isFirstTick = true;
 
 function buildSnapshotQuery() {
   var sport = getSavedSport();
@@ -100,12 +90,6 @@ function buildSnapshotQuery() {
 }
 
 function fetchSnapshot(cb) {
-  var sport = getSavedSport();
-  if (!sport) {
-    console.log('sports: no sport configured — skipping fetch');
-    cb(null, []);
-    return;
-  }
   var xhr = new XMLHttpRequest();
   xhr.open('GET', COMPANION_URL + '/api/sports/games' + buildSnapshotQuery(), true);
   xhr.timeout = 10000;
@@ -324,11 +308,7 @@ function createSportsPin(game) {
 
 function pushPin(game, label) {
   var pin = createSportsPin(game);
-  // Delete the stale -pre pin before pushing -live/final/terminal.
-  // -pre and -live are different pin IDs; without this delete the
-  // pre-game pin stays frozen on the timeline forever.
-  if (game.state === 'in-game' || game.state === 'final' ||
-      game.state === 'postponed' || game.state === 'canceled') {
+  if (game.state === 'in-game' || game.state === 'final') {
     timeline.deleteUserPin({id: 'sports-' + game.gameId + '-pre'}, function() {});
   }
   console.log('sports: PUT pin ' + pin.id + ' [' + label + '] ' +
@@ -349,27 +329,18 @@ function pushPin(game, label) {
 }
 
 function tick() {
-  if (!isLoopRunning) {
-    console.log('sports: tick aborted (loop not running)');
+  if (!isPollingActive) {
+    console.log('sports: tick aborted (polling inactive)');
     return;
   }
-
-  // Capture and clear the first-tick flag before the async fetch returns,
-  // so concurrent ticks (if any) don't also treat themselves as first.
-  var firstTick = isFirstTick;
-  if (firstTick) {
-    isFirstTick = false;
-    console.log('sports: first tick — will re-push all upcoming pins to overwrite stale timeline entries');
-  }
-
   fetchSnapshot(function(err, games) {
-    if (!isLoopRunning) {
+    if (!isPollingActive) {
       console.log('sports: snapshot returned after stop — discarding');
       return;
     }
     if (err) {
       console.log('sports: fetch failed: ' + err.message);
-      scheduleNext(true, POLL_INTERVAL_MS);
+      scheduleNext(true);
       return;
     }
 
@@ -386,15 +357,12 @@ function tick() {
         pushPin(game, 'live');
         stillLive = true;
       } else if (game.state === 'pre-game' || game.state === 'scheduled') {
-        // On the first tick, bypass the deduplication guard so stale pins
-        // (e.g. from a previous build without openWatchApp actions) are
-        // unconditionally overwritten with the current pin structure.
-        if (firstTick || !pushedScheduledIds[game.gameId]) {
+        if (!pushedScheduledIds[game.gameId]) {
           var startMs = game.startTime ? new Date(game.startTime).getTime() : NaN;
           if (!isNaN(startMs)) {
             var diffMs = startMs - Date.now();
             if (diffMs >= 0 && diffMs <= SCHEDULED_WINDOW_MS) {
-              pushPin(game, firstTick ? 'startup-refresh' : 'scheduled');
+              pushPin(game, 'scheduled');
               pushedScheduledIds[game.gameId] = true;
             }
           }
@@ -415,60 +383,47 @@ function tick() {
     }
 
     if (stillLive) {
-      scheduleNext(false, POLL_INTERVAL_MS);
+      scheduleNext(false);
     } else {
-      console.log('sports: no live games — entering idle poll (' +
-        (IDLE_POLL_INTERVAL_MS / 60000) + ' min)');
-      sendPollResult(0, function(sendErr) {
-        if (!isLoopRunning) return;
-        if (sendErr) {
-          console.log('sports: SPORTS_POLL_RESULT failed — retrying');
-          scheduleNext(true, IDLE_POLL_INTERVAL_MS);
+      console.log('sports: no live games — notifying C, awaiting next wakeup');
+      sendPollResult(0, function(err) {
+        if (!isPollingActive) return;
+        if (err) {
+          console.log('sports: SPORTS_POLL_RESULT failed — retrying on next tick');
+          scheduleNext(true);
         } else {
-          scheduleNext(false, IDLE_POLL_INTERVAL_MS);
+          stopPolling();
         }
       });
     }
   });
 }
 
-function scheduleNext(isRetry, delayMs) {
-  if (!isLoopRunning) return;
+function scheduleNext(isRetry) {
+  if (!isPollingActive) return;
   if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
-  var delay = delayMs || POLL_INTERVAL_MS;
-  pollTimer = setTimeout(tick, delay);
-  if (isRetry) console.log('sports: retrying in ' + (delay / 1000) + 's');
+  pollTimer = setTimeout(tick, POLL_INTERVAL_MS);
+  if (isRetry) console.log('sports: retrying in ' + (POLL_INTERVAL_MS / 1000) + 's');
 }
 
 function startPolling() {
-  isAppOpen = true;
-  if (isLoopRunning) {
-    // Loop already running in background — cancel the pending idle timer
-    // and fire tick() immediately so app-open always gets a fresh fetch.
-    console.log('sports: app open — cancelling idle timer, firing immediate tick');
-    if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
-    tick();
-    return;
-  }
-  // First start: full initialisation.
+  if (isPollingActive) return;
   console.log('sports: starting poll loop');
   activeGameIds = {};
   pushedFinalIds = {};
   pushedScheduledIds = {};
-  isFirstTick = true;
-  isLoopRunning = true;
+  isPollingActive = true;
   tick();
 }
 
 function stopPolling() {
-  // App closed — mark app as closed and drop to idle rate.
-  // isLoopRunning stays true so background ticks keep firing.
-  if (!isLoopRunning) return;
-  isAppOpen = false;
-  console.log('sports: app closed — switching to idle poll rate (' +
-    (IDLE_POLL_INTERVAL_MS / 60000) + ' min)');
-  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
-  pollTimer = setTimeout(tick, IDLE_POLL_INTERVAL_MS);
+  if (!isPollingActive && !pollTimer) return;
+  console.log('sports: stopping poll loop');
+  isPollingActive = false;
+  if (pollTimer) {
+    clearTimeout(pollTimer);
+    pollTimer = null;
+  }
 }
 
 function readKey(payload, name) {
@@ -554,7 +509,7 @@ Pebble.addEventListener('appmessage', function(e) {
     startPolling();
   }
   if (readKey(payload, 'SPORTS_APP_EXIT') !== undefined) {
-    console.log('sports: appmessage SPORTS_APP_EXIT — dropping to idle poll rate');
+    console.log('sports: appmessage SPORTS_APP_EXIT — stopping poll loop');
     stopPolling();
   }
 });
