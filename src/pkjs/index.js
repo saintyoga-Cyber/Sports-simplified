@@ -295,6 +295,7 @@ function createSportsPin(game) {
 
   if (isScoreState) {
     pin.updateNotification = {
+      time: game.lastUpdated || new Date().toISOString(),
       layout: {
         type: 'genericNotification',
         title: title,
