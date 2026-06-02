@@ -74,7 +74,13 @@ function getSavedTeamIds() {
 }
 
 var pollTimer = null;
-var isPollingActive = false;
+// isLoopRunning: true while a tick()/setTimeout chain is active.
+// Prevents double-starts. Cleared only when the loop fully winds down.
+var isLoopRunning = false;
+// isAppOpen: true while the watch app is in the foreground.
+// Controls whether a no-live-games tick should self-continue or halt.
+var isAppOpen = false;
+
 var activeGameIds = {};
 var pushedFinalIds = {};
 var pushedScheduledIds = {};
@@ -329,13 +335,26 @@ function pushPin(game, label) {
   });
 }
 
+// ---------- Poll loop ----------
+// Two flags separate "loop is running" from "app is open":
+//
+//   isLoopRunning — true while a tick/setTimeout chain is active.
+//                   Guards startPolling() against double-starts.
+//                   Cleared only when the loop fully winds down.
+//
+//   isAppOpen     — true while the watch app is in the foreground.
+//                   When false, a no-live-games tick halts the loop
+//                   (Worker cron handles background pin delivery).
+//                   When true, the loop keeps ticking so the user
+//                   sees score updates while watching.
+
 function tick() {
-  if (!isPollingActive) {
-    console.log('sports: tick aborted (polling inactive)');
+  if (!isLoopRunning) {
+    console.log('sports: tick aborted (loop stopped)');
     return;
   }
   fetchSnapshot(function(err, games) {
-    if (!isPollingActive) {
+    if (!isLoopRunning) {
       console.log('sports: snapshot returned after stop — discarding');
       return;
     }
@@ -384,16 +403,25 @@ function tick() {
     }
 
     if (stillLive) {
+      // Live game in progress — always keep ticking regardless of
+      // whether the app is open or not.
+      scheduleNext(false);
+    } else if (isAppOpen) {
+      // No live games but user is watching — keep polling so they see
+      // pre-game and final pins update in near-real-time.
+      console.log('sports: no live games but app is open — continuing poll');
       scheduleNext(false);
     } else {
-      console.log('sports: no live games — notifying C, awaiting next wakeup');
-      sendPollResult(0, function(err) {
-        if (!isPollingActive) return;
-        if (err) {
+      // No live games and app is closed — stop the JS loop and let the
+      // Worker cron handle background pin delivery.
+      console.log('sports: no live games, app closed — stopping JS poll loop');
+      sendPollResult(0, function(sendErr) {
+        if (!isLoopRunning) return;
+        if (sendErr) {
           console.log('sports: SPORTS_POLL_RESULT failed — retrying on next tick');
           scheduleNext(true);
         } else {
-          stopPolling();
+          stopLoop();
         }
       });
     }
@@ -401,26 +429,35 @@ function tick() {
 }
 
 function scheduleNext(isRetry) {
-  if (!isPollingActive) return;
+  if (!isLoopRunning) return;
   if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
   pollTimer = setTimeout(tick, POLL_INTERVAL_MS);
   if (isRetry) console.log('sports: retrying in ' + (POLL_INTERVAL_MS / 1000) + 's');
 }
 
+// Start the poll loop. Safe to call multiple times — guard on
+// isLoopRunning prevents double-starts and redundant tick() calls.
 function startPolling() {
-  if (isPollingActive) return;
-  console.log('sports: starting poll loop');
+  if (isLoopRunning) {
+    console.log('sports: startPolling called but loop already running — no-op');
+    return;
+  }
+  console.log('sports: starting poll loop (isAppOpen=' + isAppOpen + ')');
   activeGameIds = {};
   pushedFinalIds = {};
   pushedScheduledIds = {};
-  isPollingActive = true;
+  isLoopRunning = true;
   tick();
 }
 
-function stopPolling() {
-  if (!isPollingActive && !pollTimer) return;
-  console.log('sports: stopping poll loop');
-  isPollingActive = false;
+// Halt the poll loop immediately. Called when the loop decides to
+// wind down on its own (no live games + app closed). Does NOT reset
+// isAppOpen — that flag is managed exclusively by the app message
+// handlers and the ready event.
+function stopLoop() {
+  if (!isLoopRunning && !pollTimer) return;
+  console.log('sports: poll loop stopped');
+  isLoopRunning = false;
   if (pollTimer) {
     clearTimeout(pollTimer);
     pollTimer = null;
@@ -499,6 +536,10 @@ function registerWithServer() {
 
 Pebble.addEventListener('ready', function() {
   console.log('Sports Simplified pkjs ready');
+  // Mark app as open so the first no-live-games tick does not
+  // immediately halt the loop before the user has a chance to see
+  // anything. isAppOpen stays true until SPORTS_APP_EXIT fires.
+  isAppOpen = true;
   registerWithServer();
   startPolling();
 });
@@ -506,12 +547,17 @@ Pebble.addEventListener('ready', function() {
 Pebble.addEventListener('appmessage', function(e) {
   var payload = e && e.payload;
   if (readKey(payload, 'SPORTS_APP_OPEN') !== undefined) {
-    console.log('sports: appmessage SPORTS_APP_OPEN — starting poll loop');
+    console.log('sports: SPORTS_APP_OPEN — app foregrounded');
+    isAppOpen = true;
+    // Restart the loop if it wound down while the app was closed.
     startPolling();
   }
   if (readKey(payload, 'SPORTS_APP_EXIT') !== undefined) {
-    console.log('sports: appmessage SPORTS_APP_EXIT — stopping poll loop');
-    stopPolling();
+    console.log('sports: SPORTS_APP_EXIT — app backgrounded');
+    // Mark app closed. Do NOT call stopLoop() here — if a live game
+    // is in progress the loop should keep running. The loop will stop
+    // itself naturally at the next no-live-games tick.
+    isAppOpen = false;
   }
 });
 
