@@ -289,8 +289,11 @@ function createSportsPin(game) {
     sportsGameState: isScoreState ? 'in-game' : 'pre-game'
   };
 
+  // Pin ID: always sports-{gameId} — no -pre/-live suffix.
+  // The Worker cron uses the same ID, so its background updates
+  // overwrite this pin in-place via Rebble's idempotent PUT.
   var pin = {
-    id: 'sports-' + game.gameId + (isScoreState ? '-live' : '-pre'),
+    id: 'sports-' + game.gameId,
     time: game.startTime,
     duration: PIN_DURATION_MIN,
     layout: layout,
@@ -315,9 +318,6 @@ function createSportsPin(game) {
 
 function pushPin(game, label) {
   var pin = createSportsPin(game);
-  if (game.state === 'in-game' || game.state === 'final') {
-    timeline.deleteUserPin({id: 'sports-' + game.gameId + '-pre'}, function() {});
-  }
   console.log('sports: PUT pin ' + pin.id + ' [' + label + '] ' +
     pin.layout.nameAway + ' ' + pin.layout.scoreAway + ' - ' +
     pin.layout.scoreHome + ' ' + pin.layout.nameHome +
