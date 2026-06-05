@@ -510,11 +510,12 @@ function registerWithServer() {
   }
 
   Pebble.getTimelineToken(function(timelineToken) {
-    // Guard: reject only null/empty and the known emulator placeholder.
-    // Do NOT check token length — real Rebble tokens may be short.
-    if (!timelineToken || timelineToken === 'emulated-dummy-token') {
-      console.log('sports: getTimelineToken returned invalid/emulated token — ' +
-                  'skipping registration.');
+    console.log('sports: timelineToken=[' +
+      (timelineToken ? timelineToken.substring(0, 10) + '...' : 'NULL/EMPTY') + ']');
+
+    if (!timelineToken) {
+      console.log('sports: null/empty token — retrying in 5s');
+      setTimeout(registerWithServer, 5000);
       return;
     }
 
@@ -538,7 +539,8 @@ function registerWithServer() {
     };
     xhr.send(payload);
   }, function(err) {
-    console.log('sports: getTimelineToken failed: ' + err);
+    console.log('sports: getTimelineToken failed: ' + err + ' — retrying in 10s');
+    setTimeout(registerWithServer, 10000);
   });
 }
 
