@@ -510,6 +510,19 @@ function registerWithServer() {
   }
 
   Pebble.getTimelineToken(function(timelineToken) {
+    // Guard: reject emulator placeholder and obviously invalid tokens.
+    // A real Rebble timeline token is a long alphanumeric string (32+ chars).
+    // Storing a fake token poisons the KV store and prevents the cron worker
+    // from ever pushing live pins.
+    if (!timelineToken ||
+        timelineToken === 'emulated-dummy-token' ||
+        timelineToken.length < 20) {
+      console.log('sports: getTimelineToken returned invalid/emulated token — ' +
+                  'skipping registration. Ensure the real Pebble app is connected ' +
+                  'to Rebble and the watch is not in emulator mode.');
+      return;
+    }
+
     var payload = JSON.stringify({
       accountToken: accountToken,
       timelineToken: timelineToken,
