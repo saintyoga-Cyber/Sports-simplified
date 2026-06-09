@@ -242,6 +242,8 @@ function createSportsPin(game) {
   var recordHome = game.homeTeam && game.homeTeam.record
                      ? game.homeTeam.record : '';
   var subtitle = buildSubtitle(game);
+  var awayLabel = rankAway ? '#' + rankAway + ' ' + awayAbbr : awayAbbr;
+  var homeLabel = rankHome ? '#' + rankHome + ' ' + homeAbbr : homeAbbr;
   var matchup = awayAbbr + ' @ ' + homeAbbr;
 
   var title;
@@ -249,17 +251,23 @@ function createSportsPin(game) {
   if (isScoreState) {
     title = awayAbbr + ' ' + game.awayScore + ' — ' +
             homeAbbr + ' ' + game.homeScore;
-    bodyLines = [matchup];
+    bodyLines = [awayLabel + ' @ ' + homeLabel];
     if (game.period || game.clock) {
       bodyLines.push([game.period, game.clock].filter(Boolean).join(' '));
     }
-  } else {
-    title = matchup;
-    bodyLines = [];
     if (recordAway || recordHome) {
       bodyLines.push(awayAbbr + ' ' + recordAway + ' · ' +
                      homeAbbr + ' ' + recordHome);
     }
+  } else {
+    title = awayLabel + ' @ ' + homeLabel;
+    if (recordAway || recordHome) {
+      subtitle = subtitle + '\n' + awayAbbr + ' ' + recordAway +
+                 ' \u00b7 ' + homeAbbr + ' ' + recordHome;
+    }
+    bodyLines = [];
+    var startTimeStr = formatStartTime(game.startTime);
+    if (startTimeStr) bodyLines.push(startTimeStr);
   }
   var body = bodyLines.join('\n') || subtitle;
   var paragraphs = isScoreState
@@ -272,7 +280,6 @@ function createSportsPin(game) {
     subtitle: subtitle,
     body: body,
     tinyIcon: sportIcon(),
-    largeIcon: sportIcon(),
     lastUpdated: game.lastUpdated || new Date().toISOString(),
     primaryColor: teamColor(game.homeTeam),
     backgroundColor: teamColor(game.awayTeam),
