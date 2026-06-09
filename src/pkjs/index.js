@@ -493,7 +493,28 @@ function sendPollResult(count, onSent) {
   );
 }
 
-function registerWithServer() {
+// Known placeholder values returned by Rebble when the companion
+// session has not yet completed its internal token exchange.
+// These arrive via the SUCCESS callback — a falsy check alone
+// is insufficient to detect them.
+var DUMMY_TOKENS = ['emulated-dummy-token', 'emulated-user-token'];
+var REGISTER_MAX_RETRIES = 5;
+var REGISTER_RETRY_DELAY_MS = 3000;
+var REGISTER_ERROR_DELAY_MS = 6000;
+
+function isDummyToken(token) {
+  if (!token) return false;
+  for (var i = 0; i < DUMMY_TOKENS.length; i++) {
+    if (token === DUMMY_TOKENS[i]) return true;
+  }
+  // Catch any future emulated-* variants
+  if (token.indexOf('emulated-') === 0) return true;
+  return false;
+}
+
+function registerWithServer(retryCount) {
+  retryCount = retryCount || 0;
+
   var followed = getSavedFollowed();
   var accountToken;
   try {
@@ -511,11 +532,20 @@ function registerWithServer() {
 
   Pebble.getTimelineToken(function(timelineToken) {
     console.log('sports: timelineToken=[' +
-      (timelineToken ? timelineToken.substring(0, 10) + '...' : 'NULL/EMPTY') + ']');
+      (timelineToken ? timelineToken.substring(0, 10) + '...' : 'NULL/EMPTY') +
+      '] retry=' + retryCount);
 
-    if (!timelineToken) {
-      console.log('sports: null/empty token — retrying in 5s');
-      setTimeout(registerWithServer, 5000);
+    if (!timelineToken || isDummyToken(timelineToken)) {
+      if (retryCount < REGISTER_MAX_RETRIES) {
+        console.log('sports: dummy/null token — retrying in ' +
+          (REGISTER_RETRY_DELAY_MS / 1000) + 's (attempt ' +
+          (retryCount + 1) + '/' + REGISTER_MAX_RETRIES + ')');
+        setTimeout(function() { registerWithServer(retryCount + 1); },
+          REGISTER_RETRY_DELAY_MS);
+      } else {
+        console.log('sports: dummy token persists after ' + REGISTER_MAX_RETRIES +
+          ' retries — registration deferred to next app open');
+      }
       return;
     }
 
@@ -539,8 +569,15 @@ function registerWithServer() {
     };
     xhr.send(payload);
   }, function(err) {
-    console.log('sports: getTimelineToken failed: ' + err + ' — retrying in 10s');
-    setTimeout(registerWithServer, 10000);
+    console.log('sports: getTimelineToken failed: ' + err + ' — retry ' +
+      (retryCount + 1) + '/' + REGISTER_MAX_RETRIES);
+    if (retryCount < REGISTER_MAX_RETRIES) {
+      setTimeout(function() { registerWithServer(retryCount + 1); },
+        REGISTER_ERROR_DELAY_MS);
+    } else {
+      console.log('sports: token error persists after ' + REGISTER_MAX_RETRIES +
+        ' retries — registration deferred to next app open');
+    }
   });
 }
 
