@@ -590,10 +590,11 @@ function registerWithServer(retryCount) {
 
 Pebble.addEventListener('ready', function() {
   console.log('Sports Simplified pkjs ready');
-  // Mark app as open so the first no-live-games tick does not
-  // immediately halt the loop before the user has a chance to see
-  // anything. isAppOpen stays true until SPORTS_APP_EXIT fires.
-  isAppOpen = true;
+  // isAppOpen starts false so the first no-live-games tick stops the
+  // loop cleanly. The watch will immediately send SPORTS_APP_OPEN via
+  // init() in main.c, which sets isAppOpen=true and calls startPolling()
+  // for the real first tick — and on every subsequent app open.
+  isAppOpen = false;
   registerWithServer();
   startPolling();
 });
