@@ -204,7 +204,26 @@ zero standing cost. A worker is strictly worse here.
 | Scheduled wakeup | ~seconds of CPU+BLE per wakeup, zero between | one snapshot fetch per wakeup |
 | pkjs polling while app open | negligible (pins over BLE) | network poll every 2 min |
 
-### Proposal (NOT implemented — awaiting approval): smart game-day wakeups
+### Smart game-day wakeups — APPROVED & IMPLEMENTED (commit `e3bddee`)
+
+Implementation notes beyond the original sketch below:
+- In-game games are sent as "now" so the watch keeps re-waking through
+  the remainder of a game discovered in progress.
+- The live-poll branch now also sends `SPORTS_POLL_RESULT` (with the
+  live count) so a wakeup launch exits ~5 s after the first tick
+  instead of waiting for the 60 s failsafe.
+- An empty game list is sent explicitly: the watch clears stale game
+  wakeups and falls back to the daily 4am/4pm slot. The failsafe-exit
+  path also re-arms the fallback, so the watch is never left without a
+  future wakeup even if the phone is unreachable.
+- Auto-exit cancel: any of SELECT/UP/DOWN cancels and keeps the app
+  open ("Press any button to keep open" is shown on wakeup launches).
+- Verified: pkjs passes `node --check`; `main.c` passes a `gcc
+  -fsyntax-only` check against an SDK-faithful stub. **Not yet compiled
+  with the real Pebble SDK or tested on-watch** — sideload and watch
+  the logs before trusting a game day to it.
+
+### Original proposal (for reference): smart game-day wakeups
 
 Replace the fixed 4am/4pm schedule with a schedule derived from the
 games the user actually follows:
