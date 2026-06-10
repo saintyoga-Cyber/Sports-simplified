@@ -377,6 +377,7 @@ function tick() {
     }
 
     var stillLive = false;
+    var liveCount = 0;
 
     for (var i = 0; i < games.length; i++) {
       var game = games[i];
@@ -388,6 +389,7 @@ function tick() {
         delete pushedScheduledIds[game.gameId];
         pushPin(game, 'live');
         stillLive = true;
+        liveCount++;
       } else if (game.state === 'pre-game' || game.state === 'scheduled') {
         if (!pushedScheduledIds[game.gameId]) {
           var startMs = game.startTime ? new Date(game.startTime).getTime() : NaN;
@@ -414,29 +416,38 @@ function tick() {
       }
     }
 
-    if (stillLive) {
-      // Live game in progress — always keep ticking regardless of
-      // whether the app is open or not.
-      scheduleNext(false);
-    } else if (isAppOpen) {
-      // No live games but user is watching — keep polling so they see
-      // pre-game and final pins update in near-real-time.
-      console.log('sports: no live games but app is open — continuing poll');
-      scheduleNext(false);
-    } else {
-      // No live games and app is closed — stop the JS loop and let the
-      // Worker cron handle background pin delivery.
-      console.log('sports: no live games, app closed — stopping JS poll loop');
-      sendPollResult(0, function(sendErr) {
-        if (!isLoopRunning) return;
-        if (sendErr) {
-          console.log('sports: SPORTS_POLL_RESULT failed — retrying on next tick');
-          scheduleNext(true);
-        } else {
-          stopLoop();
-        }
-      });
-    }
+    // Ship the wakeup schedule to the watch first: on a wakeup launch
+    // the watch auto-exits shortly after SPORTS_POLL_RESULT, and the
+    // schedule must land before that.
+    sendGameTimes(games, function() {
+      if (!isLoopRunning) return;
+      if (stillLive) {
+        // Live game in progress — keep ticking while the app (and
+        // therefore this JS session) is alive. Report the live count so
+        // a wakeup launch can auto-exit promptly instead of waiting for
+        // its failsafe timer; the next re-wake is already scheduled.
+        sendPollResult(liveCount, null);
+        scheduleNext(false);
+      } else if (isAppOpen) {
+        // No live games but user is watching — keep polling so they see
+        // pre-game and final pins update in near-real-time.
+        console.log('sports: no live games but app is open — continuing poll');
+        scheduleNext(false);
+      } else {
+        // No live games and app is closed — stop the JS loop; the
+        // watch-side wakeup schedule handles background refresh.
+        console.log('sports: no live games, app closed — stopping JS poll loop');
+        sendPollResult(0, function(sendErr) {
+          if (!isLoopRunning) return;
+          if (sendErr) {
+            console.log('sports: SPORTS_POLL_RESULT failed — retrying on next tick');
+            scheduleNext(true);
+          } else {
+            stopLoop();
+          }
+        });
+      }
+    });
   });
 }
 
@@ -487,8 +498,72 @@ function readKey(payload, name) {
 var MESSAGE_KEYS_INDEX = {
   SPORTS_APP_OPEN: 2,
   SPORTS_APP_EXIT: 3,
-  SPORTS_POLL_RESULT: 4
+  SPORTS_POLL_RESULT: 4,
+  SPORTS_GAME_TIMES: 5
 };
+
+// ---------- Smart game-day wakeups ----------
+// The watch schedules its own wakeups (game start + 30-min re-wakes)
+// from a CSV of epoch seconds we send it. In-game games are sent as
+// "now" so the watch keeps re-waking through the rest of the game.
+var lastSentGameTimes = null;
+var GAME_TIMES_MAX = 8;
+var GAME_WINDOW_MS = 3.5 * 60 * 60 * 1000;
+
+function collectGameTimes(games) {
+  var nowMs = Date.now();
+  var times = [];
+  for (var i = 0; i < games.length; i++) {
+    var game = games[i];
+    if (!game || !game.gameId) continue;
+    if (game.state === 'in-game') {
+      times.push(Math.floor(nowMs / 1000));
+    } else if (game.state === 'pre-game' || game.state === 'scheduled') {
+      var startMs = game.startTime ? new Date(game.startTime).getTime() : NaN;
+      if (isNaN(startMs)) continue;
+      var diffMs = startMs - nowMs;
+      // Future games within the scheduled window, or games that should
+      // already be underway (still re-wake through their window).
+      if (diffMs <= SCHEDULED_WINDOW_MS && diffMs > -GAME_WINDOW_MS) {
+        times.push(Math.floor(startMs / 1000));
+      }
+    }
+  }
+  times.sort(function(a, b) { return a - b; });
+  var out = [];
+  for (var j = 0; j < times.length && out.length < GAME_TIMES_MAX; j++) {
+    if (out.length === 0 || times[j] !== out[out.length - 1]) {
+      out.push(times[j]);
+    }
+  }
+  return out;
+}
+
+// Send the wakeup schedule to the watch, then call done() regardless of
+// outcome — pin pushing and the poll loop must never block on this.
+// An empty CSV is meaningful: it tells the watch to fall back to the
+// daily 4am/4pm schedule and clear stale game wakeups.
+function sendGameTimes(games, done) {
+  var csv = collectGameTimes(games).join(',');
+  if (csv === lastSentGameTimes) {
+    done();
+    return;
+  }
+  Pebble.sendAppMessage(
+    { 'SPORTS_GAME_TIMES': csv },
+    function() {
+      lastSentGameTimes = csv;
+      console.log('sports: GAME_TIMES sent [' + csv + ']');
+      done();
+    },
+    function(e) {
+      var msg = (e && e.error && e.error.message) || 'unknown';
+      console.log('sports: GAME_TIMES send failed: ' + msg +
+        ' — will retry next tick');
+      done();
+    }
+  );
+}
 
 function sendPollResult(count, onSent) {
   Pebble.sendAppMessage(
