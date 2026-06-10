@@ -172,6 +172,63 @@ also wrong; see `JsTokenUtil.kt` above.
 
 ---
 
+## Background-app assessment (2026-06-10) — would an App Worker help?
+
+**Question:** can assigning the watchapp a background worker
+(`AppWorker` API) enable automatic pin updates?
+
+**Answer: no.** Two hard constraints, both verified:
+
+1. **Workers cannot talk to the phone.** The SDK background worker has
+   no AppMessage and no UI APIs (docs: Background Worker guide). pkjs
+   never runs for a worker. A worker therefore cannot fetch scores or
+   push pins — the only data-capable component is pkjs on the phone.
+2. **The Core Devices app kills pkjs the instant the watchapp closes.**
+   `CompanionAppLifecycleManager.kt` (coredevices/mobileapp): on every
+   app-run-state change, `handleAppStop()` cancels the JS session
+   immediately — no grace period. Consequence: the existing
+   "keep poll loop alive after app close" pkjs design (`isLoopRunning`
+   continuing during live games) is **dead code on the Core app** —
+   once the watchapp exits, polling stops mid-game.
+
+The only thing a worker *could* do is call `worker_launch_app()` on a
+timer — which is exactly what the `wakeup` API already does, except a
+persistent worker costs battery 24/7 while wakeups are OS-scheduled at
+zero standing cost. A worker is strictly worse here.
+
+### Battery model (who pays for what)
+
+| Mechanism | Watch battery | Phone battery |
+|---|---|---|
+| Persistent App Worker | Continuous (RAM/CPU residency, 24/7) | none |
+| Scheduled wakeup | ~seconds of CPU+BLE per wakeup, zero between | one snapshot fetch per wakeup |
+| pkjs polling while app open | negligible (pins over BLE) | network poll every 2 min |
+
+### Proposal (NOT implemented — awaiting approval): smart game-day wakeups
+
+Replace the fixed 4am/4pm schedule with a schedule derived from the
+games the user actually follows:
+
+1. pkjs already fetches the day's games; send the followed games'
+   start times to the watch via a new message key (fits in existing
+   appmessage plumbing).
+2. `main.c` schedules wakeups: one at each game start, then every
+   ~30 min during the expected game window (subject to the OS limits:
+   max **8 pending wakeups per app**, min 1 min spacing; keep the 4am
+   fallback slot).
+3. On `APP_LAUNCH_WAKEUP`, poll once, push pins, then **auto-exit**
+   (`window_stack_pop_all`) after `SPORTS_POLL_RESULT` arrives unless
+   the user presses a button — minimizes both battery and intrusion.
+4. Trade-off to accept: each wakeup visibly launches the app over the
+   watchface for a few seconds. That is inherent to the only working
+   mechanism on the Core app.
+
+Criticality: touches `main.c` lifecycle + wakeup logic = core
+functionality → must ship alone, after on-watch testing of the
+current build.
+
+---
+
 ## Minor — PR #1 put a newline inside `subtitle`
 
 For pre-game pins, `subtitle` now becomes
