@@ -261,13 +261,15 @@ function createSportsPin(game) {
     }
   } else {
     title = awayLabel + ' @ ' + homeLabel;
-    if (recordAway || recordHome) {
-      subtitle = subtitle + '\n' + awayAbbr + ' ' + recordAway +
-                 ' \u00b7 ' + homeAbbr + ' ' + recordHome;
-    }
     bodyLines = [];
     var startTimeStr = formatStartTime(game.startTime);
     if (startTimeStr) bodyLines.push(startTimeStr);
+    // Records belong in the multi-line body: subtitle is a single-line
+    // field on the watch and embedded newlines render unpredictably.
+    if (recordAway || recordHome) {
+      bodyLines.push(awayAbbr + ' ' + recordAway + ' \u00b7 ' +
+                     homeAbbr + ' ' + recordHome);
+    }
   }
   var body = bodyLines.join('\n') || subtitle;
   var paragraphs = isScoreState
@@ -280,6 +282,9 @@ function createSportsPin(game) {
     subtitle: subtitle,
     body: body,
     tinyIcon: sportIcon(),
+    // largeIcon is REQUIRED by the sportsPin layout schema — omitting it
+    // makes the timeline API reject every pin with HTTP 400.
+    largeIcon: sportIcon(),
     lastUpdated: game.lastUpdated || new Date().toISOString(),
     primaryColor: teamColor(game.homeTeam),
     backgroundColor: teamColor(game.awayTeam),
@@ -590,11 +595,13 @@ function registerWithServer(retryCount) {
 
 Pebble.addEventListener('ready', function() {
   console.log('Sports Simplified pkjs ready');
-  // isAppOpen starts false so the first no-live-games tick stops the
-  // loop cleanly. The watch will immediately send SPORTS_APP_OPEN via
-  // init() in main.c, which sets isAppOpen=true and calls startPolling()
-  // for the real first tick — and on every subsequent app open.
-  isAppOpen = false;
+  // pkjs only cold-starts when the watchapp launches, so the app is by
+  // definition open when ready fires. Relying on SPORTS_APP_OPEN from
+  // main.c here is racy: init() sends it once, before pkjs is listening,
+  // so it is dropped on cold start and isAppOpen would stay false. Warm
+  // reopens (JS already alive) are still handled by the SPORTS_APP_OPEN
+  // handler below, and SPORTS_APP_EXIT clears the flag on close.
+  isAppOpen = true;
   registerWithServer();
   startPolling();
 });
