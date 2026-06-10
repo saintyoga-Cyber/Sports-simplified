@@ -261,13 +261,15 @@ function createSportsPin(game) {
     }
   } else {
     title = awayLabel + ' @ ' + homeLabel;
-    if (recordAway || recordHome) {
-      subtitle = subtitle + '\n' + awayAbbr + ' ' + recordAway +
-                 ' \u00b7 ' + homeAbbr + ' ' + recordHome;
-    }
     bodyLines = [];
     var startTimeStr = formatStartTime(game.startTime);
     if (startTimeStr) bodyLines.push(startTimeStr);
+    // Records belong in the multi-line body: subtitle is a single-line
+    // field on the watch and embedded newlines render unpredictably.
+    if (recordAway || recordHome) {
+      bodyLines.push(awayAbbr + ' ' + recordAway + ' \u00b7 ' +
+                     homeAbbr + ' ' + recordHome);
+    }
   }
   var body = bodyLines.join('\n') || subtitle;
   var paragraphs = isScoreState
