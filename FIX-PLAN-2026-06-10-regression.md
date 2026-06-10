@@ -109,35 +109,66 @@ lifecycle messages stop being fire-and-forget.
 
 ## Root Cause 3 — Background pins (the original, pre-June-3 issue)
 
+> **REVISED 2026-06-10** after reading the Core Devices mobile app
+> source (`coredevices/mobileapp`, open source). The earlier theory
+> below ("KV poisoned from an emulator session") was wrong. The real
+> mechanism is worse: with the Core Devices phone app, **server-pushed
+> pins cannot reach the watch at all**, regardless of token.
+
+### How the Core Devices app actually handles the timeline
+
+Verified in `coredevices/mobileapp` source:
+
+1. **`LibPebbleConfig.kt`** — `emulateRemoteTimeline: Boolean = true`.
+   The Core app *emulates* the remote timeline by default. There is a
+   user-facing toggle in the app's watch settings
+   (`WatchSettingsScreen.kt`).
+2. **`RemoteTimelineEmulator.kt`** — when emulation is on, pkjs
+   `XMLHttpRequest` calls to `timeline-api.rebble.io/v1/user/pins/…`
+   are **intercepted on the phone** and the pin is written to a local
+   database. Nothing is ever sent to Rebble's web service. This is why
+   in-app pushes "work": they never leave the phone.
+3. **`JsTokenUtil.kt`** — `getTimelineToken()` returns the app's real
+   Rebble-appstore `userToken` if present in the locker, otherwise the
+   literal fallback string **`"emulated-dummy-token"`** (when emulation
+   is on). A sideloaded app has no appstore data → our real phone
+   returns the dummy token. *That* is where the KV poison came from —
+   not the SDK emulator.
+4. There is **no remote-timeline sync client anywhere in the Core app**
+   — the only reference to `timeline-api.rebble.io` in the entire
+   codebase is the interceptor. Even with a valid token, pins PUT by
+   the Cloudflare Worker to Rebble's web timeline are never fetched by
+   the phone and never reach the watch.
+
+### Consequences
+
+- The Worker's background push architecture is **incompatible with the
+  Core Devices app today**. No token fix, retry loop, or KV cleanup can
+  make it work. The June 5–9 dummy-token work treated a symptom.
+- The token retry loop in `registerWithServer()` will simply retry 5×
+  and give up on every cold start (the dummy token never becomes real).
+  Harmless, but pointless on this phone app.
+- The **only working background refresh** path on the current Core app
+  is the one already built into `main.c`: the 4am/4pm `wakeup` API
+  launches the watchapp, pkjs polls, and pins are pushed locally. This
+  works end-to-end without the Worker.
+
+### Options going forward (decide before any code change)
+
+| Option | Effort | Outcome |
+|---|---|---|
+| A. Rely on wakeup-based refresh (already implemented); optionally add more wakeup slots (e.g. every 3–4 h — `wakeup_schedule` is per-app limited to 8 pending) | Low | Pins refresh a few times a day without opening the app |
+| B. Upstream contribution / feature request to `coredevices/mobileapp` for real remote-timeline sync | External | True server push for everyone, eventually |
+| C. Keep Worker for the snapshot API only; stop pushing pins from cron (dead code path on Core app) | Low | Simpler system, no false hope |
+
+### Superseded theory (kept for the record)
+
 A correction to `FIX-PLAN-timeline-token.md` (worker repo): its
 architecture table claims the local push path uses an "internal opaque
-session token". **That is wrong.** `timeline.js` calls
-`Pebble.getTimelineToken()` and sends it as `X-User-Token` — the local
-path and the Worker use the **same token**.
-
-Implication: since local pushes worked on June 3, the phone is returning
-a **real** token. `emulated-dummy-token` is the hardcoded token of the
-**SDK emulator** (pypkjs). The most likely way KV got poisoned is a
-registration made from an emulator session — not a token-exchange race
-on the real phone. The June 5–9 retry logic is harmless but will never
-turn a dummy token real inside the emulator; on the real phone the real
-token passes on the first attempt.
-
-### What to verify (no code changes; cannot be probed from this sandbox)
-
-1. **KV contents:** in the Cloudflare dashboard, inspect the registered
-   user entry. Is `timelineToken` a real UUID-like value, and does its
-   prefix match the `sports: timelineToken=[…]` line logged by the watch?
-2. **Stale poison:** the Worker now *rejects* dummy tokens at ingestion
-   (`74f389f`), but a previously poisoned KV entry is **not** cleaned up
-   by that change. If a dummy entry is still there, delete it manually,
-   then open the watchapp once (after Fix 1) to re-register.
-3. **Cron logs:** check `[timeline] PUT sports-… → <status>` lines.
-   - `401/410` → token in KV is bad (see 1–2).
-   - `400` → pin payload problem on the Worker side.
-   - `200` with no pin on watch → pin `time` outside the timeline window.
-4. Only after 1–3 are answered does it make sense to plan further
-   background-pin work.
+session token". That is wrong — `timeline.js` calls
+`Pebble.getTimelineToken()` and sends it as `X-User-Token`; both paths
+use the same token. The "poisoned from an emulator session" theory is
+also wrong; see `JsTokenUtil.kt` above.
 
 ---
 
@@ -160,6 +191,60 @@ Cosmetic — do **not** bundle with Fix 1 or Fix 2.
 | 3 | Fix 2: `isAppOpen = true` on `ready` | Sports-simplified | HIGH — alone |
 | 4 | Background-pin verification checklist (KV, logs) | worker (no code) | — |
 | 5 | Subtitle newline cleanup | Sports-simplified | cosmetic |
+
+## Improvement requests (2026-06-10) — pin appearance & "Open App" action
+
+### Request 1 — Native big-score scoreboard (docs screenshot)
+
+The screenshot is the **native `sportsPin` scoreboard** rendered by the
+firmware from the sports attributes (`nameAway/nameHome`,
+`scoreAway/scoreHome`, `sportsGameState`, …). Our pins already declare
+`type: 'sportsPin'` and populate every one of those fields.
+
+**Why it doesn't render:** `RemoteTimelineEmulator.applyAttributesFrom()`
+in the Core Devices phone app forwards only the generic attributes
+(title, subtitle, body, icons, colors, headings, paragraphs,
+lastUpdated) to the watch. **All sports attributes are silently
+dropped.** The firmware itself supports the layout (`sportsPin = 7` in
+`coredevices/PebbleOS` `layouts.json.in`), but the phone never delivers
+the data it needs. This also retroactively validates the May 4 commit
+(`88f1ece`) that crammed everything into generic fields — that is still
+the correct workaround.
+
+**Conclusion: not achievable from this repo today.** Any change here
+(e.g. removing `body` again per the May 3 finding) would make pins
+*emptier*, not scoreboard-shaped, because the score data never reaches
+the watch. The fix belongs upstream in `coredevices/mobileapp`
+(`applyAttributesFrom` needs to map the sports attribute IDs that
+`Timeline.kt` already defines). Recommended action: file an upstream
+issue / PR; keep our sports-* fields populated so pins light up the
+moment Core ships the mapping.
+
+### Request 2 — "Open Sports Simplified" entry in the pin action menu
+
+Already implemented on our side: every pin (pkjs **and** Worker)
+carries
+
+```js
+actions: [{ type: 'openWatchApp', title: 'Open Sports App', launchCode: 1 }]
+```
+
+since May 24 (`d90c51d`, `ee02405`; worker `ba65785`).
+
+**Why it doesn't appear:** in `RemoteTimelineEmulator.kt` the Core app
+*parses* the action type (`"openWatchApp" → Action.Type.OpenWatchapp`)
+but the code that attaches actions to the stored pin is **commented out
+with a `// TODO developer actions` note**. The action is recognized and
+then discarded, so the watch menu only shows the system "Remove" entry.
+
+**Conclusion: not achievable from this repo today.** No pin JSON we
+emit can survive that TODO. Our pins already carry the correct action
+and will show "Open Sports App" automatically once Core Devices
+implements it. Recommended action: same upstream issue. (Side note: the
+`allowJs` capability added by `d90c51d` is not a real Pebble capability
+and never affected this — it can be removed in a future cleanup.)
+
+---
 
 ## Process recommendation
 
