@@ -1,6 +1,14 @@
 # Fix Plan: June 2026 Regression — "Nothing Works Anymore"
 
-**Status:** Proposed — awaiting approval, NO code changes made
+**Status:** APPLIED (2026-06-10, branch `claude/modest-carson-tfd13p`)
+- Fix 1 (restore `largeIcon`) — applied, commit `f0b0ba5`
+- Fix 2 (`isAppOpen=true` on `ready`) — applied, commit `994134f`
+- Fix 3 (records out of subtitle, into body) — applied, commit `6fc1dca`
+- Background-pin verification (Root Cause 3) — PENDING: requires the
+  Cloudflare dashboard (KV contents + cron logs), not reachable from
+  the development sandbox. See checklist below.
+- On-watch verification of Fixes 1–3 — PENDING: rebuild `.pbw`,
+  sideload, confirm `status=200` on pin pushes.
 **Repos affected:** `Sports-simplified` (pkjs), `-pebble-sports-worker` (verification only)
 **Baseline:** Last known-good = June 3 (`c5bfb7e` watchapp / `344e869` worker):
 pins updated on app open, no background updates.
