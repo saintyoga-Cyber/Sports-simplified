@@ -280,6 +280,9 @@ function createSportsPin(game) {
     subtitle: subtitle,
     body: body,
     tinyIcon: sportIcon(),
+    // largeIcon is REQUIRED by the sportsPin layout schema — omitting it
+    // makes the timeline API reject every pin with HTTP 400.
+    largeIcon: sportIcon(),
     lastUpdated: game.lastUpdated || new Date().toISOString(),
     primaryColor: teamColor(game.homeTeam),
     backgroundColor: teamColor(game.awayTeam),
