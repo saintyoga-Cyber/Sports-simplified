@@ -322,6 +322,32 @@ and never affected this — it can be removed in a future cleanup.)
 
 ---
 
+## Multi-sport polling (2026-06-11) — IMPLEMENTED (commit `7ce0aca`)
+
+Requested after diagnostics confirmed core functionality: poll every
+sport that has followed teams, not just the active one.
+
+- pkjs fans out one snapshot request per followed sport in parallel and
+  merges the results (sorted by start time, each game tagged with its
+  sport). Icons and team colors are now chosen per game.
+- Partial failure tolerance: one sport's fetch failing is reported in
+  the debug pin but does not blank the others; the tick only errors if
+  every sport fails.
+- The active sport now only seeds the settings page default.
+- Wakeup scheduling and pin pushing operate on the merged list, so the
+  smart wakeups now cover games across all followed sports (8-slot cap
+  shared).
+- Diagnostics intentionally left ON to monitor this feature: the debug
+  pin shows a per-sport breakdown, e.g. `[nhl:3 fifa-wc:2]` or
+  `[nhl:3 fifa-wc FAIL status 500]`.
+
+Related fixes this session: re-saving settings restored the wiped team
+selection (NHL pins confirmed working on-watch); worker commit
+`fd7032e` fixed the FIFA WC scoreboard slug (`FIFA.WC` → `fifa.world`,
+deployed and confirmed working).
+
+---
+
 ## Process recommendation
 
 The June 9 merge of a three-week-old branch is what reverted a required

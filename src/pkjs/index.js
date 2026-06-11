@@ -65,14 +65,6 @@ function getSavedSport() {
   }
 }
 
-function getSavedTeamIds() {
-  var followed = getSavedFollowed();
-  var sport = getSavedSport();
-  if (!sport) return [];
-  var teams = followed[sport];
-  return Array.isArray(teams) ? teams : [];
-}
-
 // --- DEBUG MODE ---
 // Temporary diagnostic: pushes one on-watch pin per poll tick showing
 // the snapshot outcome (fetch error, or game count and per-game
@@ -121,20 +113,31 @@ var pushedFinalIds = {};
 var pushedScheduledIds = {};
 var SCHEDULED_WINDOW_MS = 48 * 60 * 60 * 1000;
 
-function buildSnapshotQuery() {
-  var sport = getSavedSport();
-  var teams = getSavedTeamIds();
-  var params = [];
-  if (sport) params.push('sport=' + encodeURIComponent(sport));
-  if (teams.length > 0) params.push('teams=' + encodeURIComponent(teams.join(',')));
-  return params.length > 0 ? '?' + params.join('&') : '';
+// ---------- Multi-sport snapshot ----------
+// Poll every sport that has followed teams — not just the active one.
+// One request per sport, merged into a single game list. Each game is
+// tagged with its sport so icons/colors are chosen per game.
+
+function getFollowedWithTeams() {
+  var followed = getSavedFollowed();
+  var out = [];
+  for (var sport in followed) {
+    if (!Object.prototype.hasOwnProperty.call(followed, sport)) continue;
+    var teams = followed[sport];
+    if (Array.isArray(teams) && teams.length > 0) {
+      out.push({ sport: sport, teams: teams });
+    }
+  }
+  return out;
 }
 
-function fetchSnapshot(cb) {
+function fetchSportSnapshot(sport, teams, cb) {
   var xhr = new XMLHttpRequest();
-  xhr.open('GET', COMPANION_URL + '/api/sports/games' + buildSnapshotQuery(), true);
+  var query = '?sport=' + encodeURIComponent(sport) +
+              '&teams=' + encodeURIComponent(teams.join(','));
+  xhr.open('GET', COMPANION_URL + '/api/sports/games' + query, true);
   xhr.timeout = 10000;
-  xhr.ontimeout = function() { cb(new Error('snapshot timeout'), []); };
+  xhr.ontimeout = function() { cb(new Error('timeout'), []); };
   xhr.onload = function() {
     if (xhr.status >= 200 && xhr.status < 300) {
       try {
@@ -144,11 +147,58 @@ function fetchSnapshot(cb) {
         cb(e, []);
       }
     } else {
-      cb(new Error('snapshot status ' + xhr.status), []);
+      cb(new Error('status ' + xhr.status), []);
     }
   };
-  xhr.onerror = function() { cb(new Error('snapshot network error'), []); };
+  xhr.onerror = function() { cb(new Error('network error'), []); };
   xhr.send();
+}
+
+// Fetch all followed sports in parallel. cb(err, games, summary):
+// err only when every fetch fails (or no teams are configured at all);
+// partial failures are logged in the summary but the rest of the games
+// still flow, so one sport's outage can't blank the whole timeline.
+function fetchAllSnapshots(cb) {
+  var entries = getFollowedWithTeams();
+  if (entries.length === 0) {
+    cb(null, [], 'NO SPORT/TEAMS SET');
+    return;
+  }
+  var pending = entries.length;
+  var allGames = [];
+  var failures = [];
+  var summary = [];
+
+  function fetchOne(entry) {
+    fetchSportSnapshot(entry.sport, entry.teams, function(err, games) {
+      if (err) {
+        failures.push(entry.sport + ' FAIL ' + err.message);
+      } else {
+        for (var j = 0; j < games.length; j++) {
+          var g = games[j];
+          if (!g) continue;
+          if (!g.sport) g.sport = entry.sport;
+          allGames.push(g);
+        }
+        summary.push(entry.sport + ':' + games.length);
+      }
+      pending--;
+      if (pending === 0) {
+        var text = summary.concat(failures).join(' ');
+        if (failures.length === entries.length) {
+          cb(new Error(text), [], text);
+        } else {
+          allGames.sort(function(a, b) {
+            return new Date(a.startTime).getTime() -
+                   new Date(b.startTime).getTime();
+          });
+          cb(null, allGames, text);
+        }
+      }
+    });
+  }
+
+  for (var i = 0; i < entries.length; i++) fetchOne(entries[i]);
 }
 
 function teamLabel(team) {
@@ -198,8 +248,8 @@ function buildName(game) {
   return away + ' @ ' + home;
 }
 
-function sportIcon() {
-  var sport = getSavedSport();
+function sportIcon(sport) {
+  sport = sport || getSavedSport();
   if (sport === 'nhl')      return 'system://images/HOCKEY_GAME';
   if (sport === 'fifa-wc')  return 'system://images/SOCCER_GAME';
   if (sport === 'nba')      return 'system://images/BASKETBALL_GAME';
@@ -251,9 +301,9 @@ var NFL_TEAM_COLORS = {
   WAS: 'darkCandyAppleRed'
 };
 
-function teamColor(team) {
+function teamColor(team, sport) {
   if (!team) return 'white';
-  var sport = getSavedSport();
+  sport = sport || getSavedSport();
   var map;
   if (sport === 'nba') map = NBA_TEAM_COLORS;
   else if (sport === 'mlb') map = MLB_TEAM_COLORS;
@@ -264,6 +314,7 @@ function teamColor(team) {
 }
 
 function createSportsPin(game) {
+  var gameSport = game.sport || getSavedSport();
   var awayAbbr = teamLabel(game.awayTeam);
   var homeAbbr = teamLabel(game.homeTeam);
   var isScoreState = game.state === 'in-game' ||
@@ -316,13 +367,13 @@ function createSportsPin(game) {
     title: title,
     subtitle: subtitle,
     body: body,
-    tinyIcon: sportIcon(),
+    tinyIcon: sportIcon(gameSport),
     // largeIcon is REQUIRED by the sportsPin layout schema — omitting it
     // makes the timeline API reject every pin with HTTP 400.
-    largeIcon: sportIcon(),
+    largeIcon: sportIcon(gameSport),
     lastUpdated: game.lastUpdated || new Date().toISOString(),
-    primaryColor: teamColor(game.homeTeam),
-    backgroundColor: teamColor(game.awayTeam),
+    primaryColor: teamColor(game.homeTeam, gameSport),
+    backgroundColor: teamColor(game.awayTeam, gameSport),
     headings: [awayAbbr, homeAbbr],
     paragraphs: paragraphs,
     nameAway: awayAbbr,
@@ -356,7 +407,7 @@ function createSportsPin(game) {
         type: 'genericNotification',
         title: title,
         body: subtitle,
-        tinyIcon: sportIcon()
+        tinyIcon: sportIcon(gameSport)
       }
     };
   }
@@ -400,7 +451,7 @@ function tick() {
     console.log('sports: tick aborted (loop stopped)');
     return;
   }
-  fetchSnapshot(function(err, games) {
+  fetchAllSnapshots(function(err, games, querySummary) {
     if (!isLoopRunning) {
       console.log('sports: snapshot returned after stop — discarding');
       return;
@@ -412,7 +463,7 @@ function tick() {
       return;
     }
     debugNotify('snapshot OK', summarizeGames(games) +
-      ' [q: ' + (buildSnapshotQuery() || 'NO SPORT/TEAMS SET') + ']');
+      ' [' + querySummary + ']');
 
     var stillLive = false;
     var liveCount = 0;
