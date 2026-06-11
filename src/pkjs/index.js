@@ -411,7 +411,8 @@ function tick() {
       scheduleNext(true);
       return;
     }
-    debugNotify('snapshot OK', summarizeGames(games));
+    debugNotify('snapshot OK', summarizeGames(games) +
+      ' [q: ' + (buildSnapshotQuery() || 'NO SPORT/TEAMS SET') + ']');
 
     var stillLive = false;
     var liveCount = 0;
