@@ -73,6 +73,41 @@ function getSavedTeamIds() {
   return Array.isArray(teams) ? teams : [];
 }
 
+// --- DEBUG MODE ---
+// Temporary diagnostic: pushes one on-watch pin per poll tick showing
+// the snapshot outcome (fetch error, or game count and per-game
+// state/start). Uses a fixed pin id so each tick overwrites the last —
+// no timeline spam. Flip to false once core functionality is confirmed.
+var DEBUG_SNAPSHOT = true;
+
+function debugNotify(tag, text) {
+  if (!DEBUG_SNAPSHOT) return;
+  timeline.insertUserPin({
+    id: 'debug-snapshot',
+    time: new Date().toISOString(),
+    layout: {
+      type: 'genericPin',
+      title: 'Dbg: ' + tag,
+      tinyIcon: 'system://images/NOTIFICATION_FLAG',
+      body: String(text).substring(0, 200)
+    }
+  }, function(responseText, status) {
+    console.log('sports: debug-snapshot pin status=' + status);
+  });
+}
+
+function summarizeGames(games) {
+  if (!games || games.length === 0) return '0 games in snapshot';
+  var parts = [games.length + ' games'];
+  for (var i = 0; i < games.length && i < 3; i++) {
+    var g = games[i];
+    if (!g) continue;
+    parts.push(teamLabel(g.awayTeam) + '@' + teamLabel(g.homeTeam) +
+      ' ' + (g.state || '?') + ' ' + formatStartTime(g.startTime));
+  }
+  return parts.join(' | ');
+}
+
 var pollTimer = null;
 // isLoopRunning: true while a tick()/setTimeout chain is active.
 // Prevents double-starts. Cleared only when the loop fully winds down.
@@ -372,9 +407,11 @@ function tick() {
     }
     if (err) {
       console.log('sports: fetch failed: ' + err.message);
+      debugNotify('fetch FAIL', err.message);
       scheduleNext(true);
       return;
     }
+    debugNotify('snapshot OK', summarizeGames(games));
 
     var stillLive = false;
     var liveCount = 0;
