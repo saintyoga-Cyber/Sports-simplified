@@ -11,7 +11,7 @@ var TIMELINE_API_URL = 'https://timeline-api.rebble.io/';
 // Set to true to receive an on-watch notification showing Rebble's
 // HTTP response for every pin push. Flip back to false for normal
 // operation once diagnostics are complete.
-var DEBUG_PIN_PUSH = false;
+var DEBUG_PIN_PUSH = true;
 
 /**
  * Send a request to the timeline API.
