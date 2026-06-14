@@ -27,7 +27,8 @@
       "SPORTS_APP_OPEN": 2,
       "SPORTS_APP_EXIT": 3,
       "SPORTS_POLL_RESULT": 4,
-      "SPORTS_GAME_TIMES": 5
+      "SPORTS_GAME_TIMES": 5,
+      "SPORTS_GAME_LIST": 6
     },
     "resources": {
       "media": []
