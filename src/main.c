@@ -33,6 +33,10 @@
 #define LIST_FS 0x1f
 #define LIST_CELL_H 56
 
+// Persisted copy of the most recent game list so a cold launch can
+// render instantly instead of waiting for pkjs to boot and fetch.
+#define PERSIST_KEY_GAME_LIST 1
+
 typedef struct {
   char sport[4];
   char away[6];
@@ -223,6 +227,33 @@ static void parse_game_list(const char *s) {
   s_game_count = g;
 }
 
+// ---------- Persistent cache (instant cold-launch render) ----------
+
+// Persist values cap at PERSIST_STRING_MAX_LENGTH (256) including the
+// null terminator, so for a long list we store a prefix truncated at a
+// record boundary — never a half-encoded game.
+static void persist_save_list(const char *s) {
+  if (!s) return;
+  if ((int)strlen(s) < PERSIST_STRING_MAX_LENGTH) {
+    persist_write_string(PERSIST_KEY_GAME_LIST, s);
+    return;
+  }
+  int cut = PERSIST_STRING_MAX_LENGTH - 1;
+  while (cut > 0 && s[cut] != LIST_RS) cut--;
+  if (cut <= 0) return;  // a single record exceeds the budget — skip
+  char buf[PERSIST_STRING_MAX_LENGTH];
+  for (int i = 0; i < cut; i++) buf[i] = s[i];
+  buf[cut] = '\0';
+  persist_write_string(PERSIST_KEY_GAME_LIST, buf);
+}
+
+static void persist_load_list(void) {
+  if (!persist_exists(PERSIST_KEY_GAME_LIST)) return;
+  char buf[PERSIST_STRING_MAX_LENGTH];
+  int n = persist_read_string(PERSIST_KEY_GAME_LIST, buf, sizeof(buf));
+  if (n > 0) parse_game_list(buf);
+}
+
 // ---------- Auto-exit (wakeup launch only) ----------
 
 static void mark_interacted(void) {
@@ -347,7 +378,9 @@ static int16_t menu_get_cell_height(MenuLayer *ml, MenuIndex *idx, void *ctx) {
   if (list_is_placeholder()) {
     return layer_get_bounds(menu_layer_get_layer(ml)).size.h;
   }
-  return LIST_CELL_H;
+  // Taller centered-focus cell on round reads better with the curved
+  // scroll; rectangular keeps the compact height.
+  return PBL_IF_ROUND_ELSE(64, LIST_CELL_H);
 }
 
 static void menu_draw_row(GContext *ctx, const Layer *cell_layer,
@@ -369,33 +402,49 @@ static void menu_draw_row(GContext *ctx, const Layer *cell_layer,
   GFont team_font = fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
   GFont foot_font = fonts_get_system_font(FONT_KEY_GOTHIC_14);
 
+  // Round screens clip text at the curved edges, so inset the content
+  // further and (below) center the footer; rectangular keeps the tight
+  // left/right layout.
+  int16_t inset = PBL_IF_ROUND_ELSE(22, 4);
+  int16_t w = b.size.w - inset * 2;
+  int16_t y0 = PBL_IF_ROUND_ELSE(6, 0);
+
   // Line 1: away abbrev (left) + away score (right).
   graphics_draw_text(ctx, g->away, team_font,
-    GRect(4, 0, b.size.w - 8, 20),
+    GRect(inset, y0, w, 20),
     GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
   if (g->has_scores) {
     graphics_draw_text(ctx, g->away_score, team_font,
-      GRect(4, 0, b.size.w - 8, 20),
+      GRect(inset, y0, w, 20),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
   }
 
   // Line 2: home abbrev (left) + home score (right).
   graphics_draw_text(ctx, g->home, team_font,
-    GRect(4, 18, b.size.w - 8, 20),
+    GRect(inset, y0 + 18, w, 20),
     GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
   if (g->has_scores) {
     graphics_draw_text(ctx, g->home_score, team_font,
-      GRect(4, 18, b.size.w - 8, 20),
+      GRect(inset, y0 + 18, w, 20),
       GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
   }
 
-  // Line 3 footer: sport (left) + status (right).
+  // Line 3 footer.
+#if defined(PBL_ROUND)
+  // One centered "SPORT  STATUS" line so nothing clips on the curve.
+  char footer[40];
+  snprintf(footer, sizeof(footer), "%s  %s", g->sport, g->status);
+  graphics_draw_text(ctx, footer, foot_font,
+    GRect(inset, y0 + 38, w, 16),
+    GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
+#else
   graphics_draw_text(ctx, g->sport, foot_font,
-    GRect(4, 38, b.size.w - 8, 16),
+    GRect(inset, y0 + 38, w, 16),
     GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
   graphics_draw_text(ctx, g->status, foot_font,
-    GRect(4, 38, b.size.w - 8, 16),
+    GRect(inset, y0 + 38, w, 16),
     GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
+#endif
 }
 
 static void menu_selection_changed(MenuLayer *ml, MenuIndex new_index,
@@ -417,6 +466,7 @@ static void inbox_received_handler(DictionaryIterator *iter, void *context) {
   Tuple *game_list = dict_find(iter, MSG_SPORTS_GAME_LIST);
   if (game_list && game_list->type == TUPLE_CSTRING) {
     parse_game_list(game_list->value->cstring);
+    persist_save_list(game_list->value->cstring);
     if (s_menu_layer) menu_layer_reload_data(s_menu_layer);
   }
 
@@ -460,6 +510,9 @@ static void main_window_load(Window *window) {
     .select_click      = menu_select_click
   });
   menu_layer_set_highlight_colors(s_menu_layer, GColorBlue, GColorWhite);
+  // Centered-focus gives round watches the curved up/down scroll; it is
+  // already the default on round, but set it explicitly for clarity.
+  menu_layer_set_center_focused(s_menu_layer, PBL_IF_ROUND_ELSE(true, false));
   menu_layer_set_click_config_onto_window(s_menu_layer, window);
   layer_add_child(root, menu_layer_get_layer(s_menu_layer));
 }
@@ -475,6 +528,10 @@ static void main_window_disappear(Window *window) {
 
 static void init(void) {
   s_wakeup_launch = (launch_reason() == APP_LAUNCH_WAKEUP);
+
+  // Render the last-known games immediately on launch; the fresh list
+  // from pkjs overwrites this once it arrives.
+  persist_load_list();
 
   s_main_window = window_create();
   window_set_background_color(s_main_window, GColorWhite);
