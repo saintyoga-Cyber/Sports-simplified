@@ -505,37 +505,41 @@ function tick() {
       }
     }
 
-    // Ship the wakeup schedule to the watch first: on a wakeup launch
-    // the watch auto-exits shortly after SPORTS_POLL_RESULT, and the
-    // schedule must land before that.
+    // Ship the wakeup schedule first, then the interactive game list,
+    // then the poll result — strictly chained so only one AppMessage is
+    // in flight at a time. POLL_RESULT must land last (it arms the
+    // wakeup-launch auto-exit), so the GAME_LIST send sits between.
     sendGameTimes(games, function() {
       if (!isLoopRunning) return;
-      if (stillLive) {
-        // Live game in progress — keep ticking while the app (and
-        // therefore this JS session) is alive. Report the live count so
-        // a wakeup launch can auto-exit promptly instead of waiting for
-        // its failsafe timer; the next re-wake is already scheduled.
-        sendPollResult(liveCount, null);
-        scheduleNext(false);
-      } else if (isAppOpen) {
-        // No live games but user is watching — keep polling so they see
-        // pre-game and final pins update in near-real-time.
-        console.log('sports: no live games but app is open — continuing poll');
-        scheduleNext(false);
-      } else {
-        // No live games and app is closed — stop the JS loop; the
-        // watch-side wakeup schedule handles background refresh.
-        console.log('sports: no live games, app closed — stopping JS poll loop');
-        sendPollResult(0, function(sendErr) {
-          if (!isLoopRunning) return;
-          if (sendErr) {
-            console.log('sports: SPORTS_POLL_RESULT failed — retrying on next tick');
-            scheduleNext(true);
-          } else {
-            stopLoop();
-          }
-        });
-      }
+      sendGameList(games, function() {
+        if (!isLoopRunning) return;
+        if (stillLive) {
+          // Live game in progress — keep ticking while the app (and
+          // therefore this JS session) is alive. Report the live count so
+          // a wakeup launch can auto-exit promptly instead of waiting for
+          // its failsafe timer; the next re-wake is already scheduled.
+          sendPollResult(liveCount, null);
+          scheduleNext(false);
+        } else if (isAppOpen) {
+          // No live games but user is watching — keep polling so they see
+          // pre-game and final pins update in near-real-time.
+          console.log('sports: no live games but app is open — continuing poll');
+          scheduleNext(false);
+        } else {
+          // No live games and app is closed — stop the JS loop; the
+          // watch-side wakeup schedule handles background refresh.
+          console.log('sports: no live games, app closed — stopping JS poll loop');
+          sendPollResult(0, function(sendErr) {
+            if (!isLoopRunning) return;
+            if (sendErr) {
+              console.log('sports: SPORTS_POLL_RESULT failed — retrying on next tick');
+              scheduleNext(true);
+            } else {
+              stopLoop();
+            }
+          });
+        }
+      });
     });
   });
 }
@@ -588,7 +592,8 @@ var MESSAGE_KEYS_INDEX = {
   SPORTS_APP_OPEN: 2,
   SPORTS_APP_EXIT: 3,
   SPORTS_POLL_RESULT: 4,
-  SPORTS_GAME_TIMES: 5
+  SPORTS_GAME_TIMES: 5,
+  SPORTS_GAME_LIST: 6
 };
 
 // ---------- Smart game-day wakeups ----------
@@ -648,6 +653,102 @@ function sendGameTimes(games, done) {
     function(e) {
       var msg = (e && e.error && e.error.message) || 'unknown';
       console.log('sports: GAME_TIMES send failed: ' + msg +
+        ' — will retry next tick');
+      done();
+    }
+  );
+}
+
+// ---------- Interactive game list (sent to the watch UI) ----------
+// The watch shows a scrollable list of recent (<=24h past) and upcoming
+// (<=48h future) games plus any live games. We ship a compact delimited
+// string: games separated by RS (0x1e), fields by US (0x1f), 7 fields
+// per game: sport, away, awayScore, home, homeScore, status, scoreMarker.
+var lastSentGameList = null;
+var GAME_LIST_MAX = 12;
+var GAME_LIST_RS = String.fromCharCode(30);
+var GAME_LIST_FS = String.fromCharCode(31);
+var LIST_PAST_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+var SPORT_LABELS = {
+  nhl: 'NHL', nba: 'NBA', mlb: 'MLB', nfl: 'NFL', 'fifa-wc': 'WC'
+};
+
+function sportLabel(sport) {
+  return SPORT_LABELS[sport || getSavedSport()] || 'SPT';
+}
+
+// Group priority for live-first ordering: live(0) < upcoming(1) < past(2).
+function listGroup(state) {
+  if (state === 'in-game') return 0;
+  if (state === 'pre-game' || state === 'scheduled') return 1;
+  return 2;
+}
+
+function collectGameList(games) {
+  var nowMs = Date.now();
+  var kept = [];
+  for (var i = 0; i < games.length; i++) {
+    var g = games[i];
+    if (!g || !g.gameId) continue;
+    var group = listGroup(g.state);
+    if (group === 1) {
+      var startMs = g.startTime ? new Date(g.startTime).getTime() : NaN;
+      if (isNaN(startMs)) continue;
+      var diff = startMs - nowMs;
+      if (diff <= 0 || diff > SCHEDULED_WINDOW_MS) continue;
+    } else if (group === 2) {
+      var endMs = g.lastUpdated ? new Date(g.lastUpdated).getTime() : NaN;
+      if (!isNaN(endMs) && (nowMs - endMs) > LIST_PAST_WINDOW_MS) continue;
+    }
+    kept.push(g);
+  }
+
+  // Live first, then upcoming soonest-first, then past most-recent-first.
+  kept.sort(function(a, b) {
+    var ga = listGroup(a.state), gb = listGroup(b.state);
+    if (ga !== gb) return ga - gb;
+    var ta = new Date(a.startTime).getTime() || 0;
+    var tb = new Date(b.startTime).getTime() || 0;
+    return ga === 2 ? (tb - ta) : (ta - tb);
+  });
+
+  var rows = [];
+  for (var j = 0; j < kept.length && rows.length < GAME_LIST_MAX; j++) {
+    var game = kept[j];
+    var hasScores = game.state === 'in-game' || game.state === 'final';
+    rows.push([
+      sportLabel(game.sport),
+      teamLabel(game.awayTeam),
+      hasScores ? String(game.awayScore) : '',
+      teamLabel(game.homeTeam),
+      hasScores ? String(game.homeScore) : '',
+      buildSubtitle(game),
+      hasScores ? '1' : '0'
+    ].join(GAME_LIST_FS));
+  }
+  return rows.join(GAME_LIST_RS);
+}
+
+// Send the game list to the watch, then call done() regardless of
+// outcome — the poll loop must never block on it. An empty string is
+// meaningful: it tells the watch to render the "No games" state.
+function sendGameList(games, done) {
+  var str = collectGameList(games);
+  if (str === lastSentGameList) {
+    done();
+    return;
+  }
+  Pebble.sendAppMessage(
+    { 'SPORTS_GAME_LIST': str },
+    function() {
+      lastSentGameList = str;
+      console.log('sports: GAME_LIST sent (' + str.length + ' bytes)');
+      done();
+    },
+    function(e) {
+      var msg = (e && e.error && e.error.message) || 'unknown';
+      console.log('sports: GAME_LIST send failed: ' + msg +
         ' — will retry next tick');
       done();
     }
@@ -775,6 +876,12 @@ Pebble.addEventListener('appmessage', function(e) {
   if (readKey(payload, 'SPORTS_APP_OPEN') !== undefined) {
     console.log('sports: SPORTS_APP_OPEN — app foregrounded');
     isAppOpen = true;
+    // A fresh app open may have a watch UI with no list yet (cold watch
+    // app while pkjs stayed alive). Clear the diff caches so the next
+    // tick always re-pushes the current schedule and game list instead
+    // of skipping them as "unchanged".
+    lastSentGameList = null;
+    lastSentGameTimes = null;
     // Restart the loop if it wound down while the app was closed.
     startPolling();
   }

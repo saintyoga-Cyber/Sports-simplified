@@ -4,6 +4,7 @@
 #define MSG_SPORTS_APP_EXIT 3
 #define MSG_SPORTS_POLL_RESULT 4
 #define MSG_SPORTS_GAME_TIMES 5
+#define MSG_SPORTS_GAME_LIST 6
 
 // Smart game-day wakeups: pkjs sends followed games' start times as a
 // CSV of epoch seconds (SPORTS_GAME_TIMES). We schedule a wakeup at
@@ -22,10 +23,35 @@
 #define EXIT_FAILSAFE_MS 60000
 #define EXIT_GRACE_MS 5000
 
+// Interactive game list (SPORTS_GAME_LIST). pkjs sends a delimited
+// string: games separated by RS (0x1e), fields within a game by US
+// (0x1f). 7 fields per game: sport, away, awayScore, home, homeScore,
+// status, scoreMarker. Mirrors the parse_epochs fixed-array style — no
+// dynamic allocation.
+#define MAX_LIST_GAMES 12
+#define LIST_RS 0x1e
+#define LIST_FS 0x1f
+#define LIST_CELL_H 56
+
+typedef struct {
+  char sport[4];
+  char away[6];
+  char away_score[5];
+  char home[6];
+  char home_score[5];
+  char status[24];
+  bool has_scores;
+} ListGame;
+
 static Window *s_main_window;
-static TextLayer *s_title_layer;
-static TextLayer *s_status_layer;
-static TextLayer *s_info_layer;
+static MenuLayer *s_menu_layer;
+static Window *s_detail_window = NULL;
+static Layer *s_detail_layer = NULL;
+
+static ListGame s_games[MAX_LIST_GAMES];
+static int  s_game_count = 0;
+static bool s_list_loaded = false;   // false -> "Loading"; true && 0 -> "No games"
+static int  s_detail_index = -1;
 
 static bool s_wakeup_launch = false;
 static bool s_user_interacted = false;
@@ -144,6 +170,72 @@ static void schedule_game_wakeups(const char *csv) {
           scheduled, ngames);
 }
 
+// ---------- Game list parsing ----------
+
+static void copy_field(char *dst, int cap, const char *src, int len) {
+  if (len > cap - 1) len = cap - 1;
+  for (int i = 0; i < len; i++) dst[i] = src[i];
+  dst[len] = '\0';
+}
+
+// Parse the RS/US-delimited game list into the static s_games array.
+// Modeled on parse_epochs: single forward scan, fixed capacity, no
+// allocation. An empty string yields zero games (the "No games" state).
+static void parse_game_list(const char *s) {
+  s_game_count = 0;
+  s_list_loaded = true;
+  if (!s || !*s) return;
+
+  int g = 0;
+  const char *p = s;
+  while (*p && g < MAX_LIST_GAMES) {
+    ListGame *cur = &s_games[g];
+    cur->sport[0] = cur->away[0] = cur->away_score[0] = '\0';
+    cur->home[0] = cur->home_score[0] = cur->status[0] = '\0';
+    cur->has_scores = false;
+
+    const char *field_start = p;
+    int field_idx = 0;
+    for (;;) {
+      char c = *p;
+      if (c == LIST_FS || c == LIST_RS || c == '\0') {
+        int len = (int)(p - field_start);
+        switch (field_idx) {
+          case 0: copy_field(cur->sport, sizeof(cur->sport), field_start, len); break;
+          case 1: copy_field(cur->away, sizeof(cur->away), field_start, len); break;
+          case 2: copy_field(cur->away_score, sizeof(cur->away_score), field_start, len); break;
+          case 3: copy_field(cur->home, sizeof(cur->home), field_start, len); break;
+          case 4: copy_field(cur->home_score, sizeof(cur->home_score), field_start, len); break;
+          case 5: copy_field(cur->status, sizeof(cur->status), field_start, len); break;
+          case 6: cur->has_scores = (len > 0 && field_start[0] == '1'); break;
+          default: break;
+        }
+        field_idx++;
+        field_start = p + 1;
+        if (c == LIST_RS || c == '\0') break;
+      }
+      p++;
+    }
+    g++;
+    if (*p == '\0') break;
+    p++;  // skip the RS separator
+  }
+  s_game_count = g;
+}
+
+// ---------- Auto-exit (wakeup launch only) ----------
+
+static void mark_interacted(void) {
+  if (!s_user_interacted) {
+    APP_LOG(APP_LOG_LEVEL_INFO, "user interaction — auto-exit canceled");
+  }
+  s_user_interacted = true;
+  if (s_exit_timer) {
+    app_timer_cancel(s_exit_timer);
+    s_exit_timer = NULL;
+  }
+}
+
 static void exit_timer_cb(void *data) {
   s_exit_timer = NULL;
   if (s_user_interacted) return;
@@ -164,24 +256,170 @@ static void arm_exit_timer(uint32_t ms) {
   }
 }
 
-static void cancel_auto_exit(ClickRecognizerRef recognizer, void *context) {
-  if (!s_user_interacted) {
-    APP_LOG(APP_LOG_LEVEL_INFO, "user interaction — auto-exit canceled");
+// ---------- Detail card (full-screen single game) ----------
+
+static void detail_update_proc(Layer *layer, GContext *ctx) {
+  GRect b = layer_get_bounds(layer);
+  graphics_context_set_text_color(ctx, GColorBlack);
+  if (s_detail_index < 0 || s_detail_index >= s_game_count) return;
+  ListGame *g = &s_games[s_detail_index];
+
+  int16_t top = PBL_IF_ROUND_ELSE(24, 8);
+
+  graphics_draw_text(ctx, g->sport,
+    fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD),
+    GRect(0, top, b.size.w, 24),
+    GTextOverflowModeFill, GTextAlignmentCenter, NULL);
+
+  if (g->has_scores) {
+    int16_t sy = top + 26;
+    GFont big = fonts_get_system_font(FONT_KEY_BITHAM_42_BOLD);
+    graphics_draw_text(ctx, g->away_score, big,
+      GRect(0, sy, b.size.w / 2, 48),
+      GTextOverflowModeFill, GTextAlignmentCenter, NULL);
+    graphics_draw_text(ctx, g->home_score, big,
+      GRect(b.size.w / 2, sy, b.size.w / 2, 48),
+      GTextOverflowModeFill, GTextAlignmentCenter, NULL);
+
+    int16_t ty = sy + 50;
+    GFont tf = fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD);
+    graphics_draw_text(ctx, g->away, tf,
+      GRect(0, ty, b.size.w / 2, 28),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
+    graphics_draw_text(ctx, g->home, tf,
+      GRect(b.size.w / 2, ty, b.size.w / 2, 28),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
+  } else {
+    char matchup[16];
+    snprintf(matchup, sizeof(matchup), "%s @ %s", g->away, g->home);
+    graphics_draw_text(ctx, matchup,
+      fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD),
+      GRect(0, top + 40, b.size.w, 32),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
   }
-  s_user_interacted = true;
-  if (s_exit_timer) {
-    app_timer_cancel(s_exit_timer);
-    s_exit_timer = NULL;
+
+  int16_t fy = b.size.h - PBL_IF_ROUND_ELSE(44, 34);
+  graphics_draw_text(ctx, g->status,
+    fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
+    GRect(0, fy, b.size.w, 28),
+    GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
+}
+
+static void detail_window_load(Window *window) {
+  Layer *root = window_get_root_layer(window);
+  s_detail_layer = layer_create(layer_get_bounds(root));
+  layer_set_update_proc(s_detail_layer, detail_update_proc);
+  layer_add_child(root, s_detail_layer);
+}
+
+static void detail_window_unload(Window *window) {
+  if (s_detail_layer) {
+    layer_destroy(s_detail_layer);
+    s_detail_layer = NULL;
   }
 }
 
-static void click_config_provider(void *context) {
-  window_single_click_subscribe(BUTTON_ID_SELECT, cancel_auto_exit);
-  window_single_click_subscribe(BUTTON_ID_UP, cancel_auto_exit);
-  window_single_click_subscribe(BUTTON_ID_DOWN, cancel_auto_exit);
+static void ensure_detail_window(void) {
+  if (s_detail_window) return;
+  s_detail_window = window_create();
+  window_set_background_color(s_detail_window, GColorWhite);
+  window_set_window_handlers(s_detail_window, (WindowHandlers) {
+    .load   = detail_window_load,
+    .unload = detail_window_unload
+  });
+}
+
+// ---------- Game list MenuLayer ----------
+
+static bool list_is_placeholder(void) {
+  return (!s_list_loaded || s_game_count == 0);
+}
+
+static uint16_t menu_get_num_sections(MenuLayer *ml, void *ctx) {
+  return 1;
+}
+
+static uint16_t menu_get_num_rows(MenuLayer *ml, uint16_t section, void *ctx) {
+  return list_is_placeholder() ? 1 : (uint16_t)s_game_count;
+}
+
+static int16_t menu_get_cell_height(MenuLayer *ml, MenuIndex *idx, void *ctx) {
+  if (list_is_placeholder()) {
+    return layer_get_bounds(menu_layer_get_layer(ml)).size.h;
+  }
+  return LIST_CELL_H;
+}
+
+static void menu_draw_row(GContext *ctx, const Layer *cell_layer,
+                          MenuIndex *cell_index, void *ctx2) {
+  GRect b = layer_get_bounds(cell_layer);
+  bool hl = menu_cell_layer_is_highlighted(cell_layer);
+  graphics_context_set_text_color(ctx, hl ? GColorWhite : GColorBlack);
+
+  if (list_is_placeholder()) {
+    const char *msg = s_list_loaded ? "No games" : "Loading...";
+    graphics_draw_text(ctx, msg,
+      fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD),
+      GRect(4, b.size.h / 2 - 20, b.size.w - 8, 40),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
+    return;
+  }
+
+  ListGame *g = &s_games[cell_index->row];
+  GFont team_font = fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
+  GFont foot_font = fonts_get_system_font(FONT_KEY_GOTHIC_14);
+
+  // Line 1: away abbrev (left) + away score (right).
+  graphics_draw_text(ctx, g->away, team_font,
+    GRect(4, 0, b.size.w - 8, 20),
+    GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+  if (g->has_scores) {
+    graphics_draw_text(ctx, g->away_score, team_font,
+      GRect(4, 0, b.size.w - 8, 20),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
+  }
+
+  // Line 2: home abbrev (left) + home score (right).
+  graphics_draw_text(ctx, g->home, team_font,
+    GRect(4, 18, b.size.w - 8, 20),
+    GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+  if (g->has_scores) {
+    graphics_draw_text(ctx, g->home_score, team_font,
+      GRect(4, 18, b.size.w - 8, 20),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
+  }
+
+  // Line 3 footer: sport (left) + status (right).
+  graphics_draw_text(ctx, g->sport, foot_font,
+    GRect(4, 38, b.size.w - 8, 16),
+    GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+  graphics_draw_text(ctx, g->status, foot_font,
+    GRect(4, 38, b.size.w - 8, 16),
+    GTextOverflowModeTrailingEllipsis, GTextAlignmentRight, NULL);
+}
+
+static void menu_selection_changed(MenuLayer *ml, MenuIndex new_index,
+                                   MenuIndex old_index, void *ctx) {
+  // Any scroll counts as interaction — cancels the wakeup-launch auto-exit.
+  mark_interacted();
+}
+
+static void menu_select_click(MenuLayer *ml, MenuIndex *cell_index, void *ctx) {
+  mark_interacted();
+  if (list_is_placeholder()) return;
+  s_detail_index = cell_index->row;
+  ensure_detail_window();
+  if (s_detail_layer) layer_mark_dirty(s_detail_layer);
+  window_stack_push(s_detail_window, true);
 }
 
 static void inbox_received_handler(DictionaryIterator *iter, void *context) {
+  Tuple *game_list = dict_find(iter, MSG_SPORTS_GAME_LIST);
+  if (game_list && game_list->type == TUPLE_CSTRING) {
+    parse_game_list(game_list->value->cstring);
+    if (s_menu_layer) menu_layer_reload_data(s_menu_layer);
+  }
+
   Tuple *game_times = dict_find(iter, MSG_SPORTS_GAME_TIMES);
   if (game_times && game_times->type == TUPLE_CSTRING) {
     s_got_game_times = true;
@@ -209,39 +447,26 @@ static void wakeup_handler(WakeupId wakeup_id, int32_t reason) {
 }
 
 static void main_window_load(Window *window) {
-  Layer *window_layer = window_get_root_layer(window);
-  GRect bounds = layer_get_bounds(window_layer);
+  Layer *root = window_get_root_layer(window);
+  GRect bounds = layer_get_bounds(root);
 
-  s_title_layer = text_layer_create(GRect(0, 20, bounds.size.w, 30));
-  text_layer_set_text(s_title_layer, "Sports Timeline");
-  text_layer_set_font(s_title_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
-  text_layer_set_text_alignment(s_title_layer, GTextAlignmentCenter);
-  text_layer_set_background_color(s_title_layer, GColorClear);
-  layer_add_child(window_layer, text_layer_get_layer(s_title_layer));
-
-  s_status_layer = text_layer_create(GRect(10, 60, bounds.size.w - 20, 50));
-  text_layer_set_text(s_status_layer,
-    s_wakeup_launch ? "Updating pins..."
-                    : "Timeline pins will appear automatically for your teams!");
-  text_layer_set_font(s_status_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18));
-  text_layer_set_text_alignment(s_status_layer, GTextAlignmentCenter);
-  text_layer_set_background_color(s_status_layer, GColorClear);
-  layer_add_child(window_layer, text_layer_get_layer(s_status_layer));
-
-  s_info_layer = text_layer_create(GRect(10, 120, bounds.size.w - 20, 40));
-  text_layer_set_text(s_info_layer,
-    s_wakeup_launch ? "Press any button to keep open"
-                    : "Open settings to pick your teams");
-  text_layer_set_font(s_info_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
-  text_layer_set_text_alignment(s_info_layer, GTextAlignmentCenter);
-  text_layer_set_background_color(s_info_layer, GColorClear);
-  layer_add_child(window_layer, text_layer_get_layer(s_info_layer));
+  s_menu_layer = menu_layer_create(bounds);
+  menu_layer_set_callbacks(s_menu_layer, NULL, (MenuLayerCallbacks) {
+    .get_num_sections  = menu_get_num_sections,
+    .get_num_rows      = menu_get_num_rows,
+    .get_cell_height   = menu_get_cell_height,
+    .draw_row          = menu_draw_row,
+    .selection_changed = menu_selection_changed,
+    .select_click      = menu_select_click
+  });
+  menu_layer_set_highlight_colors(s_menu_layer, GColorBlue, GColorWhite);
+  menu_layer_set_click_config_onto_window(s_menu_layer, window);
+  layer_add_child(root, menu_layer_get_layer(s_menu_layer));
 }
 
 static void main_window_unload(Window *window) {
-  text_layer_destroy(s_title_layer);
-  text_layer_destroy(s_status_layer);
-  text_layer_destroy(s_info_layer);
+  menu_layer_destroy(s_menu_layer);
+  s_menu_layer = NULL;
 }
 
 static void main_window_disappear(Window *window) {
@@ -252,20 +477,21 @@ static void init(void) {
   s_wakeup_launch = (launch_reason() == APP_LAUNCH_WAKEUP);
 
   s_main_window = window_create();
+  window_set_background_color(s_main_window, GColorWhite);
 
   window_set_window_handlers(s_main_window, (WindowHandlers) {
     .load      = main_window_load,
     .unload    = main_window_unload,
     .disappear = main_window_disappear
   });
-  window_set_click_config_provider(s_main_window, click_config_provider);
 
   window_stack_push(s_main_window, true);
 
   app_message_register_inbox_received(inbox_received_handler);
-  // Inbox must fit the GAME_TIMES CSV (8 epochs + separators + dict
-  // overhead); outbox only carries single-byte lifecycle keys.
-  app_message_open(256, 64);
+  // Inbox must fit the SPORTS_GAME_LIST payload (up to 12 games of
+  // delimited text, ~550 bytes worst case) plus dict overhead; outbox
+  // only carries single-byte lifecycle keys.
+  app_message_open(640, 64);
 
   wakeup_service_subscribe(wakeup_handler);
 
@@ -277,6 +503,10 @@ static void init(void) {
 }
 
 static void deinit(void) {
+  if (s_detail_window) {
+    window_destroy(s_detail_window);
+    s_detail_window = NULL;
+  }
   window_destroy(s_main_window);
 }
 
